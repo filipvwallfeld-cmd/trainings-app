@@ -1,4 +1,5 @@
 import type { BackupFile, WorkoutSession } from './types'
+import { normalizeWorkoutSession } from './session'
 
 const DATABASE_NAME = 'trainings-app-db'
 const STORE_NAME = 'sessions'
@@ -37,7 +38,7 @@ export const saveSession = (session: WorkoutSession) => transaction('readwrite',
 
 export const getAllSessions = async (): Promise<WorkoutSession[]> => {
   const sessions = await transaction<WorkoutSession[]>('readonly', (store) => store.getAll())
-  return sessions.sort((left, right) => right.startedAt.localeCompare(left.startedAt))
+  return sessions.map(normalizeWorkoutSession).sort((left, right) => right.startedAt.localeCompare(left.startedAt))
 }
 
 export const deleteSession = (id: string) => transaction('readwrite', (store) => store.delete(id))
@@ -50,7 +51,7 @@ export async function importBackup(backup: BackupFile): Promise<void> {
     const tx = database.transaction(STORE_NAME, 'readwrite')
     const store = tx.objectStore(STORE_NAME)
     store.clear()
-    backup.sessions.forEach((session) => store.put(session))
+    backup.sessions.forEach((session) => store.put(normalizeWorkoutSession(session)))
     tx.oncomplete = () => {
       database.close()
       resolve()

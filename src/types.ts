@@ -21,14 +21,19 @@ export type Exercise = {
   substitute: string
 }
 
+export type WorkoutSection = 'warmup' | 'strength' | 'core' | 'cooldown' | 'routine'
+
 export type RoutineStep = {
+  templateExerciseId?: string
   exerciseId: string
   prescription: string
   note: string
   targetSets?: number
+  section?: WorkoutSection
+  restSeconds?: number
 }
 
-export type PlanUnit = {
+export type WorkoutTemplate = {
   id: string
   name: string
   shortName: string
@@ -38,19 +43,34 @@ export type PlanUnit = {
   steps: RoutineStep[]
 }
 
+export type PlanUnit = WorkoutTemplate
+
 export type SetEntry = {
   id: string
   weight: string
   reps: string
   rir: string
   done: boolean
+  restSeconds?: number
 }
 
-export type WorkoutExercise = RoutineStep & {
+export type SessionExerciseSource = 'template' | 'added' | 'replacement'
+
+export type SessionExercise = RoutineStep & {
+  id: string
+  exerciseName: string
+  source: SessionExerciseSource
+  replacedExerciseId?: string
+  order: number
+  section: WorkoutSection
+  restSeconds: number
   sets: SetEntry[]
   userNote: string
   skipped: boolean
+  removed: boolean
 }
+
+export type WorkoutExercise = SessionExercise
 
 export type PainValues = {
   neck: number
@@ -61,6 +81,8 @@ export type PainValues = {
 
 export type WorkoutSession = {
   id: string
+  templateId?: string
+  sessionType?: 'training-a' | 'training-b' | 'free' | 'routine'
   unitId: string
   unitName: string
   kind: 'strength' | 'routine'
@@ -76,6 +98,7 @@ export type WorkoutSession = {
   pauseStartedAt?: string
   pausedMs: number
   restEndsAt?: string
+  restExerciseId?: string
 }
 
 export type BackupFile = {

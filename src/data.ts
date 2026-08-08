@@ -1,4 +1,4 @@
-import type { Category, Exercise, PlanUnit, RoutineStep } from './types'
+import type { Category, Exercise, PlanUnit, RoutineStep, WorkoutSection } from './types'
 
 const missing = 'Im Trainingsplan nicht angegeben.'
 
@@ -65,11 +65,34 @@ export const exercises: Exercise[] = [
   exercise('shoulder-blades', 'Schulterblätter hinten-unten', 'Nacken/HWS', 'Spannung reduzieren', 'Locker nach hinten-unten bewegen, ohne zu pressen.', 'Pressen oder Schultern hochziehen.'),
   exercise('rdl', 'Rumänisches Kreuzheben', 'Rücken', 'Späterer defensiver Hip-Hinge-Re-Entry', 'Vorerst 2–3 Wochen pausieren. Re-Entry erst, wenn der untere Rücken nach Trainingstagen ruhig bleibt.', 'In der aktuellen Phase normal oder schwer einsteigen.', 'Stufe 1: 2 × 8 sehr leicht mit verkürztem Bewegungsradius.', 'Stufe 3: 2–3 × 8 moderat, nur wenn die LWS 24 Stunden ruhig bleibt.', 'Beinbeuger plus Hip Thrust oder Glute Bridge'),
   exercise('walk-jog', 'Walk/Jog', 'Beine', 'Defensiver Laufaufbau', 'Mit Geh-/Jog-Intervallen der passenden Phase arbeiten.', 'Bei gereiztem Rücken, Knie oder Nacken Joggen erzwingen.', 'Lockeres Gehen oder Bike.'),
+  exercise('leg-extension', 'Beinstrecker', 'Beine', 'Quadrizeps-Krafttraining', 'Kontrolliert ausführen.'),
+  exercise('calf-raise-leg-press', 'Wadenheben an der Beinpresse', 'Beine', 'Eigenständiges Wadentraining an der Beinpresse', 'Als eigene Übung mit eigenen Sätzen und Gewichten ausführen.'),
+  exercise('knee-to-wall-pause', 'Knie-vor-Wand mit Pause', 'Mobility', 'Warm-up für Training A', 'Kontrolliert ausführen und kurz pausieren.'),
+  exercise('adductor-rockback', 'Adductor Rockback', 'Mobility', 'Warm-up für Training A'),
+  exercise('active-hip-switches', 'Aktive 90/90 Hip Switches', 'Mobility', 'Aktive Hüftrotation im Warm-up', 'Kontrolliert und aktiv ausführen.'),
+  exercise('glute-bridge-march', 'Glute Bridge March', 'Core', 'Warm-up für Gesäß, Hüfte und Rumpf', 'Kontrolliert ausführen und die Körperposition stabil halten.'),
+  exercise('thoracic-rotation-quadruped', 'Thoracic Rotation im Vierfüßler', 'Mobility', 'Brustwirbelsäulen-Rotation im Warm-up'),
+  exercise('chin-tuck-rotation', 'Chin Tuck + Rotation', 'Nacken/HWS', 'Kopfposition und kontrollierte Rotation im Warm-up', 'Klein und kontrolliert ausführen.'),
+  exercise('soleus-knee-to-wall', 'Knee-to-Wall / Soleus-Mobilisation', 'Mobility', 'Warm-up für Training B'),
+  exercise('hip-liftoff', '90/90 Lift-off', 'Mobility', 'Aktive Hüftrotation im Warm-up', 'Kontrolliert ausführen.', missing, 'Aktive Hüftrotation', missing, 'Aktive 90/90 Hip Switches'),
+  exercise('wall-slide-liftoff', 'Wall Slide mit Lift-off', 'Schultern', 'Schulter-Warm-up für Training B', 'Kontrolliert ausführen.'),
+  exercise('calf-soleus-stretch', 'Wade-/Soleus-Mobilität', 'Mobility', 'Optionaler kurzer Cool-down'),
+  exercise('chest-shoulder-mobility', 'Brust-/Schultermobilität', 'Mobility', 'Optionaler kurzer Cool-down'),
 ]
 
 export const exerciseById = new Map(exercises.map((item) => [item.id, item]))
 
 const step = (exerciseId: string, prescription: string, note: string, targetSets = 1): RoutineStep => ({ exerciseId, prescription, note, targetSets })
+
+const templateStep = (
+  templateExerciseId: string,
+  section: WorkoutSection,
+  exerciseId: string,
+  prescription: string,
+  note: string,
+  targetSets = 1,
+  restSeconds = 150,
+): RoutineStep => ({ templateExerciseId, section, exerciseId, prescription, note, targetSets, restSeconds })
 
 export const planUnits: PlanUnit[] = [
   {
@@ -77,26 +100,30 @@ export const planUnits: PlanUnit[] = [
     name: 'Ganzkörpertraining A',
     shortName: 'Training A',
     kind: 'strength',
-    description: 'Brust-/Rücken-Fokus mit moderatem Beinanteil, Kniekontrolle und rückenfreundlicher Struktur.',
+    description: 'Brust-/Latzug-Fokus mit eigenständigem Bein-, Waden-, Arm- und Core-Training.',
     frequency: '1× pro Woche',
     steps: [
-      step('bike', '5–7 Minuten', 'Locker, nur Durchblutung'),
-      step('knee-to-wall', '10 pro Seite', 'Sprunggelenk/Wade für Kniekontrolle'),
-      step('tke', '2 × 15 pro Seite', 'Quadrizeps aktivieren', 2),
-      step('glute-bridge', '2 × 10', 'Gesäß/Hüfte aktivieren', 2),
-      step('chin-tucks', '2 × 8', 'Nackenposition vorbereiten', 2),
-      step('chest-press', '3 × 8–10', 'Oder Schrägbankdrücken; normal-moderat, sauber', 3),
-      step('lat-pulldown', '3 × 8–10', 'Keine HWS hochziehen', 3),
-      step('leg-press', '2–3 × 10–12', 'Leicht-moderat; keine einbeinige Beinpresse', 2),
-      step('chest-supported-row', '3 × 10', 'Rücken- und nackenfreundlich', 3),
-      step('leg-curl', '2–3 × 10–12', 'Ersatz für RDL in aktueller Phase', 2),
-      step('lateral-raise', '2 × 12–15', 'Leicht-moderat; Schultern nicht hochziehen', 2),
-      step('biceps-curl', '2 × 10–12', 'Kontrolliert', 2),
-      step('triceps-pushdown', '2 × 10–12', 'Kontrolliert', 2),
-      step('dead-bug', '2 × 8 pro Seite', 'Erste Wahl bei LWS-Sensibilität', 2),
-      step('pallof-press', '2 × 10 pro Seite', 'Anti-Rotation, Rumpfstabilität', 2),
-      step('calf-raise', '2 × 15', 'Optional; Knie-/Sprunggelenkskette', 2),
-      step('hip-flexor-quad-stretch', '30–45 Sekunden pro Seite', 'Optional; nur sanft'),
+      templateStep('a-warmup-knee-wall', 'warmup', 'knee-to-wall-pause', '8 pro Seite', 'Kontrolliert, mit kurzer Pause'),
+      templateStep('a-warmup-adductor', 'warmup', 'adductor-rockback', '6–8 pro Seite', 'Kontrollierter Warm-up'),
+      templateStep('a-warmup-9090', 'warmup', 'active-hip-switches', '6 pro Seite', 'Aktive Hüftrotation'),
+      templateStep('a-warmup-bridge-march', 'warmup', 'glute-bridge-march', '8 pro Seite', 'Position stabil halten'),
+      templateStep('a-warmup-thoracic', 'warmup', 'thoracic-rotation-quadruped', '6 pro Seite', 'Kontrollierte BWS-Rotation'),
+      templateStep('a-warmup-neck', 'warmup', 'chin-tuck-rotation', '5 pro Seite', 'Klein und kontrolliert'),
+      templateStep('a-strength-chest', 'strength', 'chest-press', '3 × 8–10', 'Oder für heute durch Schrägbankdrücken ersetzen', 3),
+      templateStep('a-strength-lat', 'strength', 'lat-pulldown', '3 × 8–10', 'Keine HWS hochziehen', 3),
+      templateStep('a-strength-leg-press', 'strength', 'leg-press', '2–3 × 10–12', 'Beidbeinig, leicht-moderat', 2),
+      templateStep('a-strength-leg-curl', 'strength', 'leg-curl', '2–3 × 10–12', 'Kontrolliert', 2),
+      templateStep('a-strength-calf-press', 'strength', 'calf-raise-leg-press', '2 × 12–15', 'Eigenständig protokollieren', 2),
+      templateStep('a-strength-lateral-raise', 'strength', 'lateral-raise', '2 × 12–15', 'Schultern nicht hochziehen', 2),
+      templateStep('a-strength-biceps', 'strength', 'biceps-curl', '2 × 10–12', 'Kontrolliert', 2),
+      templateStep('a-strength-triceps', 'strength', 'triceps-pushdown', '2 × 10–12', 'Kontrolliert', 2),
+      templateStep('a-core-dead-bug', 'core', 'dead-bug', '2 × 8 pro Seite', 'Erste Wahl bei LWS-Sensibilität', 2),
+      templateStep('a-core-pallof', 'core', 'pallof-press', '2 × 10 pro Seite', 'Anti-Rotation', 2),
+      templateStep('a-cooldown-hip', 'cooldown', 'hip-flexor-quad-stretch', '30–45 Sekunden pro Seite', 'Optional und sanft'),
+      templateStep('a-cooldown-open-book', 'cooldown', 'open-book', '5 pro Seite', 'Optional'),
+      templateStep('a-cooldown-neck', 'cooldown', 'head-rotation', '5 pro Seite', 'Locker und kontrolliert'),
+      templateStep('a-cooldown-calf', 'cooldown', 'calf-soleus-stretch', '30 Sekunden pro Seite', 'Optional'),
+      templateStep('a-cooldown-chest', 'cooldown', 'chest-shoulder-mobility', '1–2 Minuten', 'Optional'),
     ],
   },
   {
@@ -104,26 +131,30 @@ export const planUnits: PlanUnit[] = [
     name: 'Ganzkörpertraining B',
     shortName: 'Training B',
     kind: 'strength',
-    description: 'Schulter-/Arme-/Core-Fokus ohne RDL-Provokation und ohne starke Nackenbelastung.',
+    description: 'Step-ups, Rudern, Beinstrecker, hintere Schulter, Arme und Core.',
     frequency: '1× pro Woche',
     steps: [
-      step('bike', '5 Minuten', 'Oder Gehen; locker'),
-      step('hip-switches', '6 pro Seite', 'Hüftmobilität'),
-      step('wall-slides', '2 × 8', 'Schulterblatt/Nacken', 2),
-      step('monster-walk', '2 × 10 Schritte', 'Beinachse/Hüfte', 2),
-      step('bird-dog', '2 × 6 pro Seite', 'Rumpfkontrolle', 2),
-      step('step-up', '3 × 8 pro Seite', 'Bevorzugt für linkes Knie; langsam', 3),
-      step('chest-press', '3 × 8–10', 'Oder Kabel-Brustdrücken; Kopf/Schultern stabil', 3),
-      step('chest-supported-row', '3 × 8–10', 'Statt freiem Rudern', 3),
-      step('landmine-press', '2 × 8–10', 'Oder Schulterpresse leicht; bei Nackenreiz auslassen oder sehr leicht', 2),
-      step('hip-thrust', '2 × 10–12', 'Oder Glute Bridge Maschine; keine LWS-Überstreckung', 2),
-      step('reverse-fly', '2 × 12–15', 'Oder Face Pulls; leicht, Schulterblätter führen', 2),
-      step('hammer-curl', '2 × 10–12', 'Arme', 2),
-      step('triceps-pushdown', '2 × 10–12', 'Oder Trizepsseil über Kopf; bei Nackenreiz Pushdowns', 2),
-      step('side-plank', '2 × 20–30 Sekunden pro Seite', 'Nur wenn Nacken neutral bleibt', 2),
-      step('dead-bug', '2 × 8 pro Seite', 'Alternative bei Nacken-/LWS-Reiz', 2),
-      step('single-leg-stand', '2 × 30–45 Sekunden pro Seite', 'Knie/Propriozeption', 2),
-      step('chin-tucks', '2 × 8', 'Ruhig, 2–3 Sekunden halten', 2),
+      templateStep('b-warmup-soleus', 'warmup', 'soleus-knee-to-wall', '8 pro Seite', 'Kontrollierte Soleus-Mobilisation'),
+      templateStep('b-warmup-step-down', 'warmup', 'step-down', '6 pro Seite', 'Niedrig und kontrolliert'),
+      templateStep('b-warmup-hip', 'warmup', 'hip-liftoff', '5 pro Seite', 'Oder aktive Hüftrotation'),
+      templateStep('b-warmup-monster', 'warmup', 'monster-walk', '10 Schritte pro Richtung', 'Leicht und kontrolliert'),
+      templateStep('b-warmup-wall-slide', 'warmup', 'wall-slide-liftoff', '8 Wiederholungen', 'Kontrolliert'),
+      templateStep('b-warmup-neck', 'warmup', 'head-rotation', '5 pro Seite', 'Nur angenehmer Bereich'),
+      templateStep('b-strength-step-up', 'strength', 'step-up', '3 × 8 pro Seite', 'Niedrig und langsam', 3),
+      templateStep('b-strength-chest', 'strength', 'chest-press', '3 × 8–10', 'Oder für heute durch Kabel-Brustdrücken ersetzen', 3),
+      templateStep('b-strength-row', 'strength', 'chest-supported-row', '3 × 8–10', 'Rücken- und nackenfreundlich', 3),
+      templateStep('b-strength-leg-extension', 'strength', 'leg-extension', '2 × 12–15', 'Dauerhafter Bestandteil', 2),
+      templateStep('b-strength-hip-thrust', 'strength', 'hip-thrust', '2 × 10–12', 'Oder Glute Bridge Maschine', 2),
+      templateStep('b-strength-reverse-fly', 'strength', 'reverse-fly', '2 × 12–15', 'Oder Face Pulls; primär hintere Schulter', 2),
+      templateStep('b-strength-biceps', 'strength', 'hammer-curl', '2 × 10–12', 'Bizeps / Hammercurls', 2),
+      templateStep('b-strength-triceps', 'strength', 'triceps-pushdown', '2 × 10–12', 'Bei Nackenreiz Pushdowns', 2),
+      templateStep('b-core-side-plank', 'core', 'side-plank', '2 × 20–30 Sekunden pro Seite', 'Nur bei neutralem Nacken', 2),
+      templateStep('b-core-dead-bug', 'core', 'dead-bug', '2 × 8 pro Seite', 'Alternative bei Nacken-/LWS-Reiz', 2),
+      templateStep('b-cooldown-hip', 'cooldown', 'hip-flexor-quad-stretch', '30–45 Sekunden pro Seite', 'Optional und sanft'),
+      templateStep('b-cooldown-open-book', 'cooldown', 'open-book', '5 pro Seite', 'Optional'),
+      templateStep('b-cooldown-neck', 'cooldown', 'head-rotation', '5 pro Seite', 'Locker und kontrolliert'),
+      templateStep('b-cooldown-calf', 'cooldown', 'calf-soleus-stretch', '30 Sekunden pro Seite', 'Optional'),
+      templateStep('b-cooldown-chest', 'cooldown', 'chest-shoulder-mobility', '1–2 Minuten', 'Optional'),
     ],
   },
   {
@@ -203,7 +234,43 @@ export const planUnits: PlanUnit[] = [
   },
 ]
 
-export const unitById = new Map(planUnits.map((unit) => [unit.id, unit]))
+export const freeWorkoutTemplate: PlanUnit = {
+  id: 'free-training',
+  name: 'Freie Einheit',
+  shortName: 'Freies Training',
+  kind: 'strength',
+  description: 'Leere Session, die du für heute frei mit Kraftübungen zusammenstellst.',
+  frequency: 'Jederzeit',
+  steps: [],
+}
+
+export const unitById = new Map([...planUnits, freeWorkoutTemplate].map((unit) => [unit.id, unit]))
+
+export const strengthExerciseIds = new Set([
+  'chest-press',
+  'incline-press',
+  'cable-chest-press',
+  'lat-pulldown',
+  'leg-press',
+  'chest-supported-row',
+  'leg-curl',
+  'leg-extension',
+  'calf-raise',
+  'calf-raise-leg-press',
+  'lateral-raise',
+  'biceps-curl',
+  'hammer-curl',
+  'triceps-pushdown',
+  'overhead-triceps',
+  'step-up',
+  'landmine-press',
+  'shoulder-press-light',
+  'hip-thrust',
+  'glute-bridge-machine',
+  'reverse-fly',
+  'face-pulls',
+  'rdl',
+])
 
 export const medicalNotice = 'Diese App ersetzt keine ärztliche oder physiotherapeutische Diagnose. Bei starken Schmerzen, Ausstrahlung, Taubheit, Kraftverlust oder deutlicher Verschlechterung sollte medizinisch abgeklärt werden, bevor weitertrainiert wird.'
 
