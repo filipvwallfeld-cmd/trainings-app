@@ -11,6 +11,34 @@ export function createSet(): SetEntry {
   return { id: uid('set'), weight: '', reps: '', rir: '', done: false }
 }
 
+export function findLastCompletedSets(sessions: WorkoutSession[], exerciseId: string): SetEntry[] {
+  const completed = [...sessions]
+    .filter((session) => session.status === 'completed')
+    .sort((left, right) => (right.completedAt ?? right.startedAt).localeCompare(left.completedAt ?? left.startedAt))
+
+  for (const session of completed) {
+    const sets = session.exercises
+      .filter((exercise) => exercise.exerciseId === exerciseId && !exercise.removed && !exercise.skipped)
+      .flatMap((exercise) => exercise.sets)
+      .filter((set) => set.done && Boolean(set.weight.trim() || set.reps.trim()))
+    if (sets.length) return sets
+  }
+
+  return []
+}
+
+export function createSetsFromPrevious(targetSets: number, previousSets: SetEntry[] = []): SetEntry[] {
+  return Array.from({ length: targetSets }, (_, index) => ({
+    ...createSet(),
+    weight: previousSets[index]?.weight ?? '',
+    reps: previousSets[index]?.reps ?? '',
+  }))
+}
+
+export function sessionHasCompletedSet(session: WorkoutSession): boolean {
+  return session.exercises.some((exercise) => !exercise.removed && !exercise.skipped && exercise.sets.some((set) => set.done))
+}
+
 function inferLegacySection(exerciseId: string, kind: WorkoutSession['kind']): WorkoutSection {
   if (kind === 'routine') return 'routine'
   if (['bike', 'treadmill-walk', 'walk', 'knee-to-wall', 'tke', 'glute-bridge', 'chin-tucks', 'hip-switches', 'wall-slides', 'monster-walk', 'bird-dog'].includes(exerciseId)) return 'warmup'
@@ -53,7 +81,7 @@ export function createSessionExercise(
   }
 }
 
-export function createWorkoutSession(unit: PlanUnit): WorkoutSession {
+export function createWorkoutSession(unit: PlanUnit, history: WorkoutSession[] = []): WorkoutSession {
   return {
     id: uid('session'),
     templateId: unit.id === 'free-training' ? undefined : unit.id,
@@ -68,12 +96,13 @@ export function createWorkoutSession(unit: PlanUnit): WorkoutSession {
       if (!exercise) throw new Error(`Übung nicht gefunden: ${step.exerciseId}`)
       const section = step.section ?? (unit.kind === 'routine' ? 'routine' : 'strength')
       const targetSets = step.targetSets ?? 1
+      const previousSets = section === 'strength' ? findLastCompletedSets(history, exercise.id) : []
       return createSessionExercise(exercise, index, 'template', {
         ...step,
         templateExerciseId: step.templateExerciseId ?? `${unit.id}:${step.exerciseId}:${index}`,
         section,
         targetSets,
-        sets: section === 'strength' ? Array.from({ length: targetSets }, createSet) : [createSet()],
+        sets: section === 'strength' ? createSetsFromPrevious(targetSets, previousSets) : [createSet()],
         restSeconds: step.restSeconds ?? DEFAULT_REST_SECONDS,
       })
     }),

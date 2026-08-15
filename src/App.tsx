@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react'
 import { exerciseById, exercises, freeWorkoutTemplate, medicalNotice, neckWarning, painRules, planUnits, strengthExerciseIds, unitById } from './data'
 import { clearSessions, deleteSession, getAllSessions, importBackup, isValidBackup, saveSession } from './db'
-import { calculateExerciseStatistics, createSessionExercise, createSet, createWorkoutSession, DEFAULT_REST_SECONDS } from './session'
+import { calculateExerciseStatistics, createSessionExercise, createSet, createSetsFromPrevious, createWorkoutSession, DEFAULT_REST_SECONDS, findLastCompletedSets, sessionHasCompletedSet } from './session'
 import type { BackupFile, Category, Exercise, SessionExercise, WorkoutExercise, WorkoutSection, WorkoutSession } from './types'
 
 type Tab = 'today' | 'train' | 'plan' | 'exercises' | 'history' | 'settings'
@@ -95,7 +95,7 @@ function App() {
     }
     const unit = unitById.get(unitId)
     if (!unit) throw new Error('Trainingseinheit nicht gefunden')
-    const session = createWorkoutSession(unit)
+    const session = createWorkoutSession(unit, sessions.filter((item) => item.status === 'completed'))
     await saveSession(session)
     setActive(session)
     setSessions((current) => [session, ...current])
@@ -110,6 +110,14 @@ function App() {
     setToast('Training gespeichert.')
   }
 
+  const abort = async (sessionId: string) => {
+    await deleteSession(sessionId)
+    setActive(null)
+    await refresh()
+    navigate('train')
+    setToast('Training verworfen.')
+  }
+
   const completed = sessions.filter((session) => session.status === 'completed')
   const latest = completed[0]
 
@@ -118,7 +126,7 @@ function App() {
   let content: ReactNode
   if (tab === 'today') content = <Today latest={latest} active={active} onBegin={begin} onOpenHistory={(id) => navigate('history', id)} />
   else if (tab === 'train') content = active
-    ? <ActiveWorkout session={active} history={completed} onChange={setActive} onComplete={complete} onToast={setToast} />
+    ? <ActiveWorkout session={active} history={completed} onChange={setActive} onComplete={complete} onAbort={abort} onToast={setToast} />
     : <Train onBegin={begin} />
   else if (tab === 'plan') content = <Plan selectedId={planId} onSelect={(id) => navigate('plan', id)} onBegin={begin} />
   else if (tab === 'exercises') content = <Exercises sessions={completed} />
@@ -200,7 +208,7 @@ function Plan({ selectedId, onSelect, onBegin }: { selectedId: string | null; on
       <button className="primary wide sticky-action" onClick={() => onBegin(unit.id)}>Einheit starten</button>
     </>
   }
-  return <><PageHeader eyebrow="Trainingsplan Version 6" title="Dein Plan" text="2–3 realistische Trainingstage mit Kraft, Mobility und Prävention." />
+  return <><PageHeader eyebrow="Trainingsplan Version 7" title="Dein Plan" text="2–3 realistische Trainingstage mit Kraft, Mobility und Prävention." />
     <div className="week-card"><span>Minimalwoche</span><strong>Training A + Training B</strong><small>Gute Woche: zusätzlich lockeres Bike oder Walk/Jog</small></div>
     <div className="stack">{planUnits.map((unit) => <button className="plan-unit" key={unit.id} onClick={() => onSelect(unit.id)}><div><span className="tag">{unit.frequency}</span><h2>{unit.name}</h2><p>{unit.description}</p></div><b>›</b></button>)}</div>
     <section className="notice warning"><strong>Schmerzampel</strong>{painRules.map(([level, rule]) => <div className="rule" key={level}><span>{level}</span><p>{rule}</p></div>)}</section>
@@ -242,6 +250,10 @@ function completedVolume(exercises: SessionExercise[]) {
   }, 0)
 }
 
+function completedExerciseCount(exercises: SessionExercise[]) {
+  return exercises.filter((exercise) => !exercise.removed && !exercise.skipped && exercise.sets.some((set) => set.done)).length
+}
+
 function ExerciseArt({ category }: { category: Category }) {
   const marks: Record<Category, string> = { Brust: '↔', Rücken: '⌁', Schultern: '╱╲', Arme: '⌒', Beine: '╱', Core: '◎', Mobility: '≈', Knie: '⌞', 'Nacken/HWS': '◉' }
   return <span className="exercise-art" aria-hidden="true"><i>{marks[category]}</i></span>
@@ -251,8 +263,10 @@ function Info({ label, value }: { label: string; value: string }) {
   return <div className="info-row"><strong>{label}</strong><p className={value.startsWith('Im Trainingsplan') ? 'muted' : ''}>{value}</p></div>
 }
 
-function ActiveWorkout({ session, history, onChange, onComplete, onToast }: { session: WorkoutSession; history: WorkoutSession[]; onChange: (session: WorkoutSession) => void; onComplete: (session: WorkoutSession) => void; onToast: (message: string) => void }) {
+function ActiveWorkout({ session, history, onChange, onComplete, onAbort, onToast }: { session: WorkoutSession; history: WorkoutSession[]; onChange: (session: WorkoutSession) => void; onComplete: (session: WorkoutSession) => void; onAbort: (sessionId: string) => Promise<void>; onToast: (message: string) => void }) {
   const [finishOpen, setFinishOpen] = useState(false)
+  const [abortOpen, setAbortOpen] = useState(false)
+  const [emptyOpen, setEmptyOpen] = useState(false)
   const [tick, setTick] = useState(0)
   const [picker, setPicker] = useState<{ mode: 'add' | 'replace'; exerciseIndex?: number } | null>(null)
   const saveTimer = useRef<number | undefined>(undefined)
@@ -292,19 +306,21 @@ function ActiveWorkout({ session, history, onChange, onComplete, onToast }: { se
     if (!picker) return
     if (picker.mode === 'replace' && picker.exerciseIndex !== undefined) {
       const current = session.exercises[picker.exerciseIndex]
+      const targetSets = current.sets.length || current.targetSets || 3
       const replacement = createSessionExercise(selected, current.order, 'replacement', {
         templateExerciseId: current.templateExerciseId,
         replacedExerciseId: current.exerciseId,
         section: current.section,
-        targetSets: current.sets.length || current.targetSets || 3,
+        targetSets,
         restSeconds: current.restSeconds,
         prescription: current.prescription,
         note: `Für diese Session statt ${current.exerciseName}`,
+        sets: createSetsFromPrevious(targetSets, findLastCompletedSets(history, selected.id)),
       })
       onChange({ ...session, exercises: session.exercises.map((item, index) => index === picker.exerciseIndex ? replacement : item) })
     } else {
       const insertionIndex = session.exercises.reduce((last, item, index) => item.section === 'strength' ? index + 1 : last, 0)
-      const added = createSessionExercise(selected, insertionIndex, 'added', { section: 'strength', targetSets: 3, restSeconds: DEFAULT_REST_SECONDS })
+      const added = createSessionExercise(selected, insertionIndex, 'added', { section: 'strength', targetSets: 3, restSeconds: DEFAULT_REST_SECONDS, sets: createSetsFromPrevious(3, findLastCompletedSets(history, selected.id)) })
       const next = [...session.exercises]
       next.splice(insertionIndex, 0, added)
       onChange({ ...session, exercises: next.map((item, index) => ({ ...item, order: index })) })
@@ -316,6 +332,11 @@ function ActiveWorkout({ session, history, onChange, onComplete, onToast }: { se
     if (session.isPaused && session.pauseStartedAt) {
       onChange({ ...session, isPaused: false, pausedMs: session.pausedMs + Date.now() - new Date(session.pauseStartedAt).getTime(), pauseStartedAt: undefined })
     } else onChange({ ...session, isPaused: true, pauseStartedAt: new Date().toISOString() })
+  }
+
+  const abortCurrentSession = async () => {
+    window.clearTimeout(saveTimer.current)
+    await onAbort(session.id)
   }
 
   const requiredExercises = session.kind === 'strength' ? session.exercises.filter((item) => item.section === 'strength' && !item.removed && !item.skipped) : session.exercises.filter((item) => !item.removed && !item.skipped)
@@ -332,19 +353,19 @@ function ActiveWorkout({ session, history, onChange, onComplete, onToast }: { se
 
   const renderStrengthExercise = (item: SessionExercise, exerciseIndex: number) => {
     const detail = exerciseById.get(item.exerciseId)
-    const previous = history.find((past) => past.exercises.some((exercise) => exercise.exerciseId === item.exerciseId && !exercise.removed))?.exercises.find((exercise) => exercise.exerciseId === item.exerciseId && !exercise.removed)
+    const previousSets = findLastCompletedSets(history, item.exerciseId)
     return <article className={item.skipped ? 'workout-exercise skipped' : 'workout-exercise'} key={item.id} data-exercise-id={item.exerciseId}>
       <div className="exercise-head"><span className="exercise-index">{String(session.exercises.filter((exercise) => exercise.section === 'strength' && !exercise.removed).findIndex((exercise) => exercise.id === item.id) + 1).padStart(2, '0')}</span><div><h2>{item.exerciseName}</h2><p>{item.prescription} · {item.note}</p>{item.source !== 'template' && <span className={`source-badge ${item.source}`}>{item.source === 'added' ? 'Heute hinzugefügt' : `Heute ersetzt: ${exerciseById.get(item.replacedExerciseId ?? '')?.name ?? item.replacedExerciseId}`}</span>}</div></div>
       <div className="session-exercise-actions"><button onClick={() => setPicker({ mode: 'replace', exerciseIndex })}>Für heute ersetzen</button><button onClick={() => updateExercise(exerciseIndex, (exercise) => ({ ...exercise, removed: true }))}>Für heute entfernen</button><button onClick={() => updateExercise(exerciseIndex, (exercise) => ({ ...exercise, skipped: !exercise.skipped }))}>{item.skipped ? 'Übung fortsetzen' : 'Überspringen'}</button></div>
       {detail && <details className="instructions"><summary>Ausführung & Ersatz</summary><p>{detail.execution}</p><small>Ersatz: {detail.substitute}</small></details>}
-      {previous && <div className="previous-values"><span>Letztes Mal</span><strong>{previous.sets.map((set) => `${set.weight ? `${set.weight} kg × ` : ''}${set.reps || '–'}`).join(' · ')}</strong></div>}
+      {previousSets.length > 0 && <div className="previous-values"><span>Letztes Mal</span><strong>{previousSets.map((set) => `${set.weight ? `${set.weight} kg × ` : ''}${set.reps || '–'}`).join(' · ')}</strong></div>}
       {!item.skipped && <>
         <div className="exercise-rest-setting"><span>Pause <strong>{formatSeconds(item.restSeconds)}</strong></span><div><button onClick={() => updateExercise(exerciseIndex, (exercise) => ({ ...exercise, restSeconds: Math.max(30, exercise.restSeconds - 30) }))}>−30</button><button onClick={() => updateExercise(exerciseIndex, (exercise) => ({ ...exercise, restSeconds: Math.min(600, exercise.restSeconds + 30) }))}>+30</button></div></div>
         <div className="set-labels"><span>Satz</span><span>kg</span><span>Wdh.</span><span>RIR</span><span>Fertig</span></div>
         <div className="sets">{item.sets.map((set, setIndex) => <div className={set.done ? 'set-row done' : 'set-row'} key={set.id}>
           <span className="set-number">{setIndex + 1}</span>
-          <input aria-label={`${item.exerciseName} Gewicht Satz ${setIndex + 1}`} inputMode="decimal" placeholder={previous?.sets[setIndex]?.weight || '–'} value={set.weight} onChange={(event) => updateExercise(exerciseIndex, (exercise) => ({ ...exercise, sets: exercise.sets.map((current) => current.id === set.id ? { ...current, weight: event.target.value.replace('.', ',') } : current) }))} />
-          <input aria-label={`${item.exerciseName} Wiederholungen Satz ${setIndex + 1}`} inputMode="numeric" placeholder={previous?.sets[setIndex]?.reps || '–'} value={set.reps} onChange={(event) => updateExercise(exerciseIndex, (exercise) => ({ ...exercise, sets: exercise.sets.map((current) => current.id === set.id ? { ...current, reps: event.target.value } : current) }))} />
+          <input aria-label={`${item.exerciseName} Gewicht Satz ${setIndex + 1}`} inputMode="decimal" placeholder={previousSets[setIndex]?.weight || '–'} value={set.weight} onChange={(event) => updateExercise(exerciseIndex, (exercise) => ({ ...exercise, sets: exercise.sets.map((current) => current.id === set.id ? { ...current, weight: event.target.value.replace('.', ',') } : current) }))} />
+          <input aria-label={`${item.exerciseName} Wiederholungen Satz ${setIndex + 1}`} inputMode="numeric" placeholder={previousSets[setIndex]?.reps || '–'} value={set.reps} onChange={(event) => updateExercise(exerciseIndex, (exercise) => ({ ...exercise, sets: exercise.sets.map((current) => current.id === set.id ? { ...current, reps: event.target.value } : current) }))} />
           <input aria-label={`${item.exerciseName} RIR Satz ${setIndex + 1}`} inputMode="numeric" placeholder="–" value={set.rir} onChange={(event) => updateExercise(exerciseIndex, (exercise) => ({ ...exercise, sets: exercise.sets.map((current) => current.id === set.id ? { ...current, rir: event.target.value } : current) }))} />
           <button aria-label={`${item.exerciseName} Satz ${setIndex + 1} abhaken`} className="check-button" onClick={() => toggleSet(exerciseIndex, set.id)}>{set.done ? '✓' : ''}</button>
         </div>)}</div>
@@ -368,8 +389,10 @@ function ActiveWorkout({ session, history, onChange, onComplete, onToast }: { se
       {renderCompactSection('cooldown', 'ca. 3–5 Minuten')}
     </> : <div className="routine-session-list">{session.exercises.map((item, index) => !item.removed && <div className="compact-exercise" key={item.id}><button className={item.sets[0]?.done ? 'compact-check done' : 'compact-check'} onClick={() => item.sets[0] && toggleSet(index, item.sets[0].id)}>{item.sets[0]?.done ? '✓' : ''}</button><span><strong>{item.exerciseName}</strong><small>{item.prescription}</small></span></div>)}</div>}
     {session.exercises.some((item) => item.removed) && <details className="removed-exercises"><summary>Für heute entfernt ({session.exercises.filter((item) => item.removed).length})</summary>{session.exercises.map((item, index) => item.removed && <button key={item.id} onClick={() => updateExercise(index, (exercise) => ({ ...exercise, removed: false }))}>{item.exerciseName} wiederherstellen</button>)}</details>}
-    <button className="finish-button" onClick={() => setFinishOpen(true)}>Training beenden</button>
+    <div className="workout-end-actions"><button className="finish-button" onClick={() => sessionHasCompletedSet(session) ? setFinishOpen(true) : setEmptyOpen(true)}>Training beenden</button><button className="abort-button" onClick={() => setAbortOpen(true)}>Training abbrechen</button></div>
     {finishOpen && <FinishSheet session={{ ...session, durationMinutes: session.durationMinutes || elapsed }} onClose={() => setFinishOpen(false)} onComplete={onComplete} />}
+    {abortOpen && <AbortWorkoutSheet onClose={() => setAbortOpen(false)} onAbort={abortCurrentSession} />}
+    {emptyOpen && <EmptyWorkoutSheet onClose={() => setEmptyOpen(false)} onAbort={abortCurrentSession} />}
     {picker && <ExercisePicker mode={picker.mode} currentExerciseId={picker.exerciseIndex === undefined ? undefined : session.exercises[picker.exerciseIndex]?.exerciseId} onSelect={chooseExercise} onClose={() => setPicker(null)} />}
   </div>
 }
@@ -390,6 +413,14 @@ function ExercisePicker({ mode, currentExerciseId, onSelect, onClose }: { mode: 
   const [query, setQuery] = useState('')
   const candidates = exercises.filter((exercise) => exercise.id !== currentExerciseId && (mode === 'replace' || strengthExerciseIds.has(exercise.id)) && exercise.name.toLowerCase().includes(query.toLowerCase()))
   return <div className="sheet-backdrop"><section className="exercise-picker" role="dialog" aria-modal="true"><div className="sheet-handle" /><div className="sheet-title"><div><span className="eyebrow">Nur diese Session</span><h2>{mode === 'add' ? 'Übung hinzufügen' : 'Übung ersetzen'}</h2></div><button className="icon-button" onClick={onClose}>×</button></div><label className="search"><span>⌕</span><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Übung suchen" /></label><div className="picker-list">{candidates.map((exercise) => <button key={exercise.id} onClick={() => onSelect(exercise)}><ExerciseArt category={exercise.category} /><span><strong>{exercise.name}</strong><small>{exercise.category}</small></span><b>+</b></button>)}</div></section></div>
+}
+
+function AbortWorkoutSheet({ onClose, onAbort }: { onClose: () => void; onAbort: () => Promise<void> }) {
+  return <div className="sheet-backdrop"><section className="finish-sheet confirmation-sheet" role="dialog" aria-modal="true"><div className="sheet-handle" /><span className="eyebrow">Eingaben verwerfen</span><h2>Training wirklich abbrechen?</h2><p>Alle Eingaben dieser Trainingseinheit werden verworfen.</p><div className="confirmation-actions"><button className="secondary-button" onClick={onClose}>Weitertrainieren</button><button className="destructive-button" onClick={onAbort}>Training abbrechen</button></div></section></div>
+}
+
+function EmptyWorkoutSheet({ onClose, onAbort }: { onClose: () => void; onAbort: () => Promise<void> }) {
+  return <div className="sheet-backdrop"><section className="finish-sheet confirmation-sheet" role="dialog" aria-modal="true"><div className="sheet-handle" /><span className="eyebrow">Noch keine Leistung</span><h2>In diesem Training wurde noch kein Satz abgeschlossen.</h2><p>Leere Trainings werden nicht im Verlauf gespeichert und beeinflussen keine Statistik.</p><div className="confirmation-actions"><button className="secondary-button" onClick={onClose}>Weitertrainieren</button><button className="destructive-button" onClick={onAbort}>Training abbrechen</button></div></section></div>
 }
 
 function FinishSheet({ session, onClose, onComplete }: { session: WorkoutSession; onClose: () => void; onComplete: (session: WorkoutSession) => void }) {
@@ -419,9 +450,14 @@ function History({ sessions, detailId, onOpen, onBack, onDelete }: { sessions: W
 
 function HistoryDetail({ session, onBack, onDelete }: { session: WorkoutSession; onBack: () => void; onDelete: (id: string) => void }) {
   return <><button className="back-button" onClick={onBack}>← Verlauf</button><PageHeader eyebrow={formatDate(session.completedAt)} title={session.unitName} />
-    <div className="stat-grid history-overview"><div><strong>{session.durationMinutes}</strong><small>Minuten</small></div><div><strong>{session.effort}/10</strong><small>Anstrengung</small></div><div><strong>{session.exercises.filter((exercise) => !exercise.skipped && !exercise.removed).length}</strong><small>Übungen</small></div><div><strong>{formatNumber(completedVolume(session.exercises))}</strong><small>Volumen kg</small></div></div>
+    <div className="stat-grid history-overview"><div><strong>{session.durationMinutes}</strong><small>Minuten</small></div><div><strong>{session.effort}/10</strong><small>Anstrengung</small></div><div><strong>{completedExerciseCount(session.exercises)}</strong><small>Übungen</small></div><div><strong>{formatNumber(completedVolume(session.exercises))}</strong><small>Volumen kg</small></div></div>
     <div className="pain-summary"><strong>Beschwerden</strong><div><span>Nacken <b>{session.pain.neck}/10</b></span><span>Unterer Rücken <b>{session.pain.lowerBack}/10</b></span><span>Hüfte <b>{session.pain.hip}/10</b></span><span>Linkes Knie <b>{session.pain.leftKnee}/10</b></span></div></div>
-    <div className="history-exercises">{session.exercises.map((item, index) => <article className={item.removed ? 'removed' : ''} key={item.id}><div><span>{String(index + 1).padStart(2, '0')}</span><h3>{item.exerciseName}</h3>{item.source === 'added' && <small className="history-source added">Hinzugefügt</small>}{item.source === 'replacement' && <small className="history-source replacement">Ersetzt {exerciseById.get(item.replacedExerciseId ?? '')?.name ?? item.replacedExerciseId}</small>}{item.removed && <small className="history-source removed">Für diese Session entfernt</small>}{item.skipped && !item.removed && <small>Übersprungen</small>}</div>{!item.skipped && !item.removed && <><div className="history-rest">Pause {formatSeconds(item.restSeconds)}</div><div className="history-sets">{item.sets.map((set, setIndex) => <p key={set.id}><span>Satz {setIndex + 1}</span><strong>{set.weight ? `${set.weight} kg` : 'ohne Gewicht'} · {set.reps || '–'} Wdh.{set.rir ? ` · RIR ${set.rir}` : ''}{set.restSeconds ? ` · Pause ${formatSeconds(set.restSeconds)}` : ''}</strong><b>{set.done ? '✓' : '–'}</b></p>)}</div></>}{item.userNote && <blockquote>{item.userNote}</blockquote>}</article>)}</div>
+    <div className="history-exercises">{session.exercises.map((item, index) => {
+      const completedSets = item.sets.map((set, setIndex) => ({ set, setIndex })).filter(({ set }) => set.done)
+      const notCompleted = !item.removed && !item.skipped && completedSets.length === 0
+      const className = item.removed ? 'removed' : notCompleted ? 'not-completed' : ''
+      return <article className={className} key={item.id}><div><span>{String(index + 1).padStart(2, '0')}</span><h3>{item.exerciseName}</h3>{item.source === 'added' && <small className="history-source added">Hinzugefügt</small>}{item.source === 'replacement' && <small className="history-source replacement">Ersetzt {exerciseById.get(item.replacedExerciseId ?? '')?.name ?? item.replacedExerciseId}</small>}{item.removed && <small className="history-source removed">Für diese Session entfernt</small>}{item.skipped && !item.removed && <small>Übersprungen</small>}{notCompleted && <small className="history-source not-completed">Nicht durchgeführt</small>}{item.section !== 'strength' && completedSets.length > 0 && <small className="history-source completed">Abgehakt</small>}</div>{item.section === 'strength' && completedSets.length > 0 && <><div className="history-rest">Pause {formatSeconds(item.restSeconds)}</div><div className="history-sets">{completedSets.map(({ set, setIndex }) => <p key={set.id}><span>Satz {setIndex + 1}</span><strong>{set.weight ? `${set.weight} kg` : 'ohne Zusatzgewicht'} · {set.reps || '–'} Wdh.{set.rir ? ` · RIR ${set.rir}` : ''}{set.restSeconds ? ` · Pause ${formatSeconds(set.restSeconds)}` : ''}</strong><b>✓</b></p>)}</div></>}{item.userNote && <blockquote>{item.userNote}</blockquote>}</article>
+    })}</div>
     {session.note && <div className="session-note"><strong>Notiz</strong><p>{session.note}</p></div>}
     <button className="danger-button" onClick={() => { if (window.confirm('Dieses Training wirklich löschen?')) onDelete(session.id) }}>Training löschen</button>
   </>
@@ -465,7 +501,7 @@ function Settings({ sessions, onRefresh, onToast }: { sessions: WorkoutSession[]
     <section className="settings-section"><div className="settings-title"><span>⌂</span><div><h2>Offline-App</h2><p>Bereit für den iPhone-Homescreen</p></div></div><div className="offline-steps"><p><b>1</b>In Safari auf „Teilen“ tippen.</p><p><b>2</b>„Zum Home-Bildschirm“ wählen.</p><p><b>3</b>Die App einmal vollständig online öffnen.</p></div></section>
     <section className="notice danger"><strong>Medizinischer Hinweis</strong><p>{medicalNotice}</p></section>
     <button className="danger-button" onClick={wipe}>Alle lokalen Daten löschen</button>
-    <p className="version">Trainingsplan Version 6 · App Version 1.0</p>
+    <p className="version">Trainingsplan Version 7 · App Version 1.0</p>
   </>
 }
 
