@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react'
 import { exerciseById, exercises, freeWorkoutTemplate, medicalNotice, neckWarning, painRules, planUnits, strengthExerciseIds, unitById } from './data'
 import { clearSessions, deleteSession, getAllSessions, importBackup, isValidBackup, saveSession } from './db'
-import { calculateExerciseStatistics, createSessionExercise, createSet, createSetsFromPrevious, createWorkoutSession, DEFAULT_REST_SECONDS, findLastCompletedSets, sessionHasCompletedSet } from './session'
+import { calculateExerciseStatistics, createSessionExercise, createSet, createSetsFromPrevious, createWorkoutSession, DEFAULT_REST_SECONDS, findLastCompletedSets, isSetCompleted, sessionHasCompletedSet } from './session'
 import type { BackupFile, Category, Exercise, SessionExercise, WorkoutExercise, WorkoutSection, WorkoutSession } from './types'
 
 type Tab = 'today' | 'train' | 'plan' | 'exercises' | 'history' | 'settings'
@@ -243,7 +243,7 @@ function formatNumber(value: number) {
 }
 
 function completedVolume(exercises: SessionExercise[]) {
-  return exercises.filter((exercise) => !exercise.removed && !exercise.skipped).flatMap((exercise) => exercise.sets).filter((set) => set.done).reduce((sum, set) => {
+  return exercises.filter((exercise) => !exercise.removed && !exercise.skipped).flatMap((exercise) => exercise.sets).filter((set) => isSetCompleted(set)).reduce((sum, set) => {
     const weight = Number(set.weight.replace(',', '.')) || 0
     const reps = Number(set.reps) || 0
     return sum + weight * reps
@@ -251,7 +251,7 @@ function completedVolume(exercises: SessionExercise[]) {
 }
 
 function completedExerciseCount(exercises: SessionExercise[]) {
-  return exercises.filter((exercise) => !exercise.removed && !exercise.skipped && exercise.sets.some((set) => set.done)).length
+  return exercises.filter((exercise) => !exercise.removed && !exercise.skipped && exercise.sets.some((set) => isSetCompleted(set))).length
 }
 
 function ExerciseArt({ category }: { category: Category }) {
@@ -345,7 +345,7 @@ function ActiveWorkout({ session, history, onChange, onComplete, onAbort, onToas
   }
 
   const requiredExercises = session.kind === 'strength' ? session.exercises.filter((item) => item.section === 'strength' && !item.removed && !item.skipped) : session.exercises.filter((item) => !item.removed && !item.skipped)
-  const doneSets = requiredExercises.flatMap((item) => item.sets).filter((set) => set.done).length
+  const doneSets = requiredExercises.flatMap((item) => item.sets).filter((set) => isSetCompleted(set)).length
   const totalSets = requiredExercises.flatMap((item) => item.sets).length
   const progress = totalSets ? Math.round((doneSets / totalSets) * 100) : 0
   const elapsed = sessionMinutes(session)
@@ -457,7 +457,7 @@ function HistoryDetail({ session, onBack, onDelete }: { session: WorkoutSession;
     <div className="stat-grid history-overview"><div><strong>{session.durationMinutes}</strong><small>Minuten</small></div><div><strong>{session.effort}/10</strong><small>Anstrengung</small></div><div><strong>{completedExerciseCount(session.exercises)}</strong><small>Übungen</small></div><div><strong>{formatNumber(completedVolume(session.exercises))}</strong><small>Volumen kg</small></div></div>
     <div className="pain-summary"><strong>Beschwerden</strong><div><span>Nacken <b>{session.pain.neck}/10</b></span><span>Unterer Rücken <b>{session.pain.lowerBack}/10</b></span><span>Hüfte <b>{session.pain.hip}/10</b></span><span>Linkes Knie <b>{session.pain.leftKnee}/10</b></span></div></div>
     <div className="history-exercises">{session.exercises.map((item, index) => {
-      const completedSets = item.sets.map((set, setIndex) => ({ set, setIndex })).filter(({ set }) => set.done)
+      const completedSets = item.sets.map((set, setIndex) => ({ set, setIndex })).filter(({ set }) => isSetCompleted(set))
       const notCompleted = !item.removed && !item.skipped && completedSets.length === 0
       const className = item.removed ? 'removed' : notCompleted ? 'not-completed' : ''
       return <article className={className} key={item.id}><div><span>{String(index + 1).padStart(2, '0')}</span><h3>{item.exerciseName}</h3>{item.source === 'added' && <small className="history-source added">Hinzugefügt</small>}{item.source === 'replacement' && <small className="history-source replacement">Ersetzt {exerciseById.get(item.replacedExerciseId ?? '')?.name ?? item.replacedExerciseId}</small>}{item.removed && <small className="history-source removed">Für diese Session entfernt</small>}{item.skipped && !item.removed && <small>Übersprungen</small>}{notCompleted && <small className="history-source not-completed">Nicht durchgeführt</small>}{item.section !== 'strength' && completedSets.length > 0 && <small className="history-source completed">Abgehakt</small>}</div>{item.section === 'strength' && completedSets.length > 0 && <><div className="history-rest">Pause {formatSeconds(item.restSeconds)}</div><div className="history-sets">{completedSets.map(({ set, setIndex }) => <p key={set.id}><span>Satz {setIndex + 1}</span><strong>{set.weight ? `${set.weight} kg` : 'ohne Zusatzgewicht'} · {set.reps || '–'} Wdh.{set.rir ? ` · RIR ${set.rir}` : ''}{set.restSeconds ? ` · Pause ${formatSeconds(set.restSeconds)}` : ''}</strong><b>✓</b></p>)}</div></>}{item.userNote && <blockquote>{item.userNote}</blockquote>}</article>

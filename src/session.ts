@@ -11,6 +11,40 @@ export function createSet(): SetEntry {
   return { id: uid('set'), weight: '', reps: '', rir: '', done: false }
 }
 
+type LegacySetEntry = Partial<SetEntry> & {
+  completed?: boolean
+  isCompleted?: boolean
+}
+
+type LegacyWorkoutSession = WorkoutSession & {
+  completed?: boolean
+  isCompleted?: boolean
+  finishedAt?: string
+  endedAt?: string
+}
+
+function hasRecordedSetValues(set: LegacySetEntry): boolean {
+  return Boolean(String(set.weight ?? '').trim() || String(set.reps ?? '').trim() || String(set.rir ?? '').trim())
+}
+
+export function isSetCompleted(set: LegacySetEntry, allowValueFallback = false): boolean {
+  if (typeof set.done === 'boolean') return set.done
+  if (typeof set.completed === 'boolean') return set.completed
+  if (typeof set.isCompleted === 'boolean') return set.isCompleted
+  return allowValueFallback && hasRecordedSetValues(set)
+}
+
+function normalizeSessionStatus(session: LegacyWorkoutSession): WorkoutSession['status'] {
+  if (session.status === 'active' || session.status === 'completed') return session.status
+  if (typeof session.completed === 'boolean') return session.completed ? 'completed' : 'active'
+  if (typeof session.isCompleted === 'boolean') return session.isCompleted ? 'completed' : 'active'
+  if (session.completedAt || session.finishedAt || session.endedAt) return 'completed'
+  const hasHistoricalPerformance = (session.exercises ?? []).some((exercise) =>
+    (exercise.sets ?? []).some((set) => isSetCompleted(set, true)),
+  )
+  return hasHistoricalPerformance ? 'completed' : 'active'
+}
+
 export function findLastCompletedSets(sessions: WorkoutSession[], exerciseId: string): SetEntry[] {
   const completed = [...sessions]
     .filter((session) => session.status === 'completed')
@@ -20,7 +54,7 @@ export function findLastCompletedSets(sessions: WorkoutSession[], exerciseId: st
     const sets = session.exercises
       .filter((exercise) => exercise.exerciseId === exerciseId && !exercise.removed && !exercise.skipped)
       .flatMap((exercise) => exercise.sets)
-      .filter((set) => set.done && Boolean((set.weight ?? '').trim() || (set.reps ?? '').trim()))
+      .filter((set) => isSetCompleted(set) && Boolean((set.weight ?? '').trim() || (set.reps ?? '').trim()))
     if (sets.length) return sets
   }
 
@@ -36,7 +70,7 @@ export function createSetsFromPrevious(targetSets: number, previousSets: SetEntr
 }
 
 export function sessionHasCompletedSet(session: WorkoutSession): boolean {
-  return session.exercises.some((exercise) => !exercise.removed && !exercise.skipped && exercise.sets.some((set) => set.done))
+  return session.exercises.some((exercise) => !exercise.removed && !exercise.skipped && exercise.sets.some((set) => isSetCompleted(set)))
 }
 
 function inferLegacySection(exerciseId: string, kind: WorkoutSession['kind']): WorkoutSection {
@@ -116,9 +150,14 @@ export function createWorkoutSession(unit: PlanUnit, history: WorkoutSession[] =
 }
 
 export function normalizeWorkoutSession(session: WorkoutSession): WorkoutSession {
+  const legacySession = session as LegacyWorkoutSession
   const kind = session.kind ?? 'strength'
+  const status = normalizeSessionStatus(legacySession)
+  const completedAt = session.completedAt ?? legacySession.finishedAt ?? legacySession.endedAt
   return {
     ...session,
+    status,
+    completedAt: status === 'completed' ? completedAt ?? session.startedAt : completedAt,
     templateId: session.templateId ?? (session.unitId === 'free-training' ? undefined : session.unitId),
     sessionType: session.sessionType ?? sessionTypeForUnit(session.unitId),
     pausedMs: session.pausedMs ?? 0,
@@ -133,14 +172,17 @@ export function normalizeWorkoutSession(session: WorkoutSession): WorkoutSession
         order: item.order ?? index,
         section,
         restSeconds: item.restSeconds ?? DEFAULT_REST_SECONDS,
-        sets: (item.sets ?? []).map((set, setIndex) => ({
-          ...set,
-          id: set.id ?? `legacy-set-${session.id}-${index}-${setIndex}`,
-          weight: set.weight ?? '',
-          reps: set.reps ?? '',
-          rir: set.rir ?? '',
-          done: set.done ?? false,
-        })),
+        sets: (item.sets ?? []).map((set, setIndex) => {
+          const legacySet = set as LegacySetEntry
+          return {
+            ...set,
+            id: set.id ?? `legacy-set-${session.id}-${index}-${setIndex}`,
+            weight: String(set.weight ?? ''),
+            reps: String(set.reps ?? ''),
+            rir: String(set.rir ?? ''),
+            done: isSetCompleted(legacySet, status === 'completed'),
+          }
+        }),
         userNote: item.userNote ?? '',
         skipped: item.skipped ?? false,
         removed: item.removed ?? false,
@@ -179,7 +221,7 @@ export function calculateExerciseStatistics(sessions: WorkoutSession[], exercise
     .filter((session) => session.status === 'completed')
     .flatMap((session) => {
       const matching = session.exercises.filter((item) => item.exerciseId === exerciseId && !item.removed && !item.skipped)
-      const completedSets = matching.flatMap((item) => item.sets).filter((set) => set.done)
+      const completedSets = matching.flatMap((item) => item.sets).filter((set) => isSetCompleted(set))
       if (!completedSets.length) return []
       const weightedSets = completedSets.map((set) => ({ weight: parseNumber(set.weight), reps: parseNumber(set.reps) }))
       return [{
