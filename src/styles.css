@@ -197,7 +197,13 @@ p, h1, h2, h3 { margin-top: 0; }
 .active-exercises { display: grid; gap: 14px; }
 .workout-exercise { border: 1px solid var(--line); border-radius: 23px; background: var(--surface); padding: 17px 13px 14px; }
 .workout-exercise.skipped { opacity: .48; }
-.exercise-head { display: grid; grid-template-columns: 32px 1fr; gap: 8px; align-items: start; }
+.session-exercise-menu { position: relative; margin-left: auto; align-self: flex-start; }
+.session-exercise-menu > summary { list-style: none; width: 36px; height: 36px; border: 1px solid var(--line); border-radius: 11px; display: grid; place-items: center; color: var(--muted); font-size: 1.25rem; cursor: pointer; }
+.session-exercise-menu > summary::-webkit-details-marker { display: none; }
+.session-exercise-menu > div { position: absolute; z-index: 8; top: 42px; right: 0; width: 190px; padding: 6px; border: 1px solid #353c47; border-radius: 14px; background: #181c23; box-shadow: 0 16px 45px rgba(0,0,0,.42); display: grid; gap: 3px; }
+.session-exercise-menu button { border: 0; border-radius: 10px; background: transparent; color: var(--text); padding: 10px; text-align: left; cursor: pointer; }
+.session-exercise-menu button:hover { background: var(--surface-2); }
+.exercise-head { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; gap: 8px; align-items: start; }
 .exercise-index { color: #5f6773; font-size: .7rem; font-weight: 900; padding-top: 5px; }
 .exercise-head h2 { margin: 0 0 4px; font-size: 1.12rem; letter-spacing: -.025em; }
 .exercise-head p { color: var(--muted); margin: 0; font-size: .78rem; line-height: 1.4; }
@@ -205,9 +211,6 @@ p, h1, h2, h3 { margin-top: 0; }
 .source-badge { display: inline-block; width: fit-content; margin-top: 5px; border-radius: 99px; padding: 3px 7px; font-size: .58rem; font-weight: 800; }
 .source-badge.added { color: var(--blue); background: #17243b; }
 .source-badge.replacement { color: var(--orange); background: #2b2118; }
-.session-exercise-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 0 40px; }
-.session-exercise-actions button { border: 1px solid #313742; border-radius: 9px; background: #171b21; color: #9da5b0; padding: 7px 9px; font-size: .65rem; cursor: pointer; }
-.session-exercise-actions button:nth-child(2) { color: #d98a8a; }
 .instructions { margin: 12px 0 0 40px; padding: 10px 0; border-top: 1px solid var(--line); color: var(--muted); }
 .instructions summary { color: #bfc5cc; font-size: .78rem; cursor: pointer; }
 .instructions p { margin: 9px 0 5px; font-size: .8rem; line-height: 1.45; }

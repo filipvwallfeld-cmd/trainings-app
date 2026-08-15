@@ -309,7 +309,7 @@ function ActiveWorkout({ session, history, onChange, onComplete, onAbort, onToas
       const targetSets = current.sets.length || current.targetSets || 3
       const replacement = createSessionExercise(selected, current.order, 'replacement', {
         templateExerciseId: current.templateExerciseId,
-        replacedExerciseId: current.exerciseId,
+        replacedExerciseId: current.source === 'replacement' && current.replacedExerciseId ? current.replacedExerciseId : current.exerciseId,
         section: current.section,
         targetSets,
         restSeconds: current.restSeconds,
@@ -339,6 +339,11 @@ function ActiveWorkout({ session, history, onChange, onComplete, onAbort, onToas
     await onAbort(session.id)
   }
 
+  const completeCurrentSession = (completedSession: WorkoutSession) => {
+    window.clearTimeout(saveTimer.current)
+    onComplete(completedSession)
+  }
+
   const requiredExercises = session.kind === 'strength' ? session.exercises.filter((item) => item.section === 'strength' && !item.removed && !item.skipped) : session.exercises.filter((item) => !item.removed && !item.skipped)
   const doneSets = requiredExercises.flatMap((item) => item.sets).filter((set) => set.done).length
   const totalSets = requiredExercises.flatMap((item) => item.sets).length
@@ -355,8 +360,7 @@ function ActiveWorkout({ session, history, onChange, onComplete, onAbort, onToas
     const detail = exerciseById.get(item.exerciseId)
     const previousSets = findLastCompletedSets(history, item.exerciseId)
     return <article className={item.skipped ? 'workout-exercise skipped' : 'workout-exercise'} key={item.id} data-exercise-id={item.exerciseId}>
-      <div className="exercise-head"><span className="exercise-index">{String(session.exercises.filter((exercise) => exercise.section === 'strength' && !exercise.removed).findIndex((exercise) => exercise.id === item.id) + 1).padStart(2, '0')}</span><div><h2>{item.exerciseName}</h2><p>{item.prescription} · {item.note}</p>{item.source !== 'template' && <span className={`source-badge ${item.source}`}>{item.source === 'added' ? 'Heute hinzugefügt' : `Heute ersetzt: ${exerciseById.get(item.replacedExerciseId ?? '')?.name ?? item.replacedExerciseId}`}</span>}</div></div>
-      <div className="session-exercise-actions"><button onClick={() => setPicker({ mode: 'replace', exerciseIndex })}>Für heute ersetzen</button><button onClick={() => updateExercise(exerciseIndex, (exercise) => ({ ...exercise, removed: true }))}>Für heute entfernen</button><button onClick={() => updateExercise(exerciseIndex, (exercise) => ({ ...exercise, skipped: !exercise.skipped }))}>{item.skipped ? 'Übung fortsetzen' : 'Überspringen'}</button></div>
+      <div className="exercise-head"><span className="exercise-index">{String(session.exercises.filter((exercise) => exercise.section === 'strength' && !exercise.removed).findIndex((exercise) => exercise.id === item.id) + 1).padStart(2, '0')}</span><div><h2>{item.exerciseName}</h2><p>{item.prescription} · {item.note}</p>{item.source !== 'template' && <span className={`source-badge ${item.source}`}>{item.source === 'added' ? 'Heute hinzugefügt' : `Heute ersetzt: ${exerciseById.get(item.replacedExerciseId ?? '')?.name ?? item.replacedExerciseId}`}</span>}</div><details className="session-exercise-menu"><summary aria-label={`${item.exerciseName} Aktionen`}>…</summary><div><button onClick={() => setPicker({ mode: 'replace', exerciseIndex })}>Für heute ersetzen</button><button onClick={() => updateExercise(exerciseIndex, (exercise) => ({ ...exercise, removed: true }))}>Für heute entfernen</button><button onClick={() => updateExercise(exerciseIndex, (exercise) => ({ ...exercise, skipped: !exercise.skipped }))}>{item.skipped ? 'Übung fortsetzen' : 'Überspringen'}</button></div></details></div>
       {detail && <details className="instructions"><summary>Ausführung & Ersatz</summary><p>{detail.execution}</p><small>Ersatz: {detail.substitute}</small></details>}
       {previousSets.length > 0 && <div className="previous-values"><span>Letztes Mal</span><strong>{previousSets.map((set) => `${set.weight ? `${set.weight} kg × ` : ''}${set.reps || '–'}`).join(' · ')}</strong></div>}
       {!item.skipped && <>
@@ -390,7 +394,7 @@ function ActiveWorkout({ session, history, onChange, onComplete, onAbort, onToas
     </> : <div className="routine-session-list">{session.exercises.map((item, index) => !item.removed && <div className="compact-exercise" key={item.id}><button className={item.sets[0]?.done ? 'compact-check done' : 'compact-check'} onClick={() => item.sets[0] && toggleSet(index, item.sets[0].id)}>{item.sets[0]?.done ? '✓' : ''}</button><span><strong>{item.exerciseName}</strong><small>{item.prescription}</small></span></div>)}</div>}
     {session.exercises.some((item) => item.removed) && <details className="removed-exercises"><summary>Für heute entfernt ({session.exercises.filter((item) => item.removed).length})</summary>{session.exercises.map((item, index) => item.removed && <button key={item.id} onClick={() => updateExercise(index, (exercise) => ({ ...exercise, removed: false }))}>{item.exerciseName} wiederherstellen</button>)}</details>}
     <div className="workout-end-actions"><button className="finish-button" onClick={() => sessionHasCompletedSet(session) ? setFinishOpen(true) : setEmptyOpen(true)}>Training beenden</button><button className="abort-button" onClick={() => setAbortOpen(true)}>Training abbrechen</button></div>
-    {finishOpen && <FinishSheet session={{ ...session, durationMinutes: session.durationMinutes || elapsed }} onClose={() => setFinishOpen(false)} onComplete={onComplete} />}
+    {finishOpen && <FinishSheet session={{ ...session, durationMinutes: session.durationMinutes || elapsed }} onClose={() => setFinishOpen(false)} onComplete={completeCurrentSession} />}
     {abortOpen && <AbortWorkoutSheet onClose={() => setAbortOpen(false)} onAbort={abortCurrentSession} />}
     {emptyOpen && <EmptyWorkoutSheet onClose={() => setEmptyOpen(false)} onAbort={abortCurrentSession} />}
     {picker && <ExercisePicker mode={picker.mode} currentExerciseId={picker.exerciseIndex === undefined ? undefined : session.exercises[picker.exerciseIndex]?.exerciseId} onSelect={chooseExercise} onClose={() => setPicker(null)} />}
@@ -411,7 +415,7 @@ function formatSeconds(seconds: number) {
 
 function ExercisePicker({ mode, currentExerciseId, onSelect, onClose }: { mode: 'add' | 'replace'; currentExerciseId?: string; onSelect: (exercise: Exercise) => void; onClose: () => void }) {
   const [query, setQuery] = useState('')
-  const candidates = exercises.filter((exercise) => exercise.id !== currentExerciseId && (mode === 'replace' || strengthExerciseIds.has(exercise.id)) && exercise.name.toLowerCase().includes(query.toLowerCase()))
+  const candidates = exercises.filter((exercise) => exercise.id !== currentExerciseId && strengthExerciseIds.has(exercise.id) && exercise.name.toLowerCase().includes(query.toLowerCase()))
   return <div className="sheet-backdrop"><section className="exercise-picker" role="dialog" aria-modal="true"><div className="sheet-handle" /><div className="sheet-title"><div><span className="eyebrow">Nur diese Session</span><h2>{mode === 'add' ? 'Übung hinzufügen' : 'Übung ersetzen'}</h2></div><button className="icon-button" onClick={onClose}>×</button></div><label className="search"><span>⌕</span><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Übung suchen" /></label><div className="picker-list">{candidates.map((exercise) => <button key={exercise.id} onClick={() => onSelect(exercise)}><ExerciseArt category={exercise.category} /><span><strong>{exercise.name}</strong><small>{exercise.category}</small></span><b>+</b></button>)}</div></section></div>
 }
 

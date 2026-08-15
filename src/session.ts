@@ -20,7 +20,7 @@ export function findLastCompletedSets(sessions: WorkoutSession[], exerciseId: st
     const sets = session.exercises
       .filter((exercise) => exercise.exerciseId === exerciseId && !exercise.removed && !exercise.skipped)
       .flatMap((exercise) => exercise.sets)
-      .filter((set) => set.done && Boolean(set.weight.trim() || set.reps.trim()))
+      .filter((set) => set.done && Boolean((set.weight ?? '').trim() || (set.reps ?? '').trim()))
     if (sets.length) return sets
   }
 
@@ -133,7 +133,14 @@ export function normalizeWorkoutSession(session: WorkoutSession): WorkoutSession
         order: item.order ?? index,
         section,
         restSeconds: item.restSeconds ?? DEFAULT_REST_SECONDS,
-        sets: (item.sets ?? []).map((set, setIndex) => ({ ...set, id: set.id ?? `legacy-set-${session.id}-${index}-${setIndex}` })),
+        sets: (item.sets ?? []).map((set, setIndex) => ({
+          ...set,
+          id: set.id ?? `legacy-set-${session.id}-${index}-${setIndex}`,
+          weight: set.weight ?? '',
+          reps: set.reps ?? '',
+          rir: set.rir ?? '',
+          done: set.done ?? false,
+        })),
         userNote: item.userNote ?? '',
         skipped: item.skipped ?? false,
         removed: item.removed ?? false,
