@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react'
-import { exerciseById, exercises, freeWorkoutTemplate, medicalNotice, neckWarning, painRules, planUnits, strengthExerciseIds, unitById } from './data'
+import { exerciseById as systemExerciseById, exercises as systemExercises, freeWorkoutTemplate, medicalNotice, neckWarning, painRules, planUnits, strengthExerciseIds, unitById } from './data'
 import { clearSessions, deleteSession, getAllSessions, importBackup, isValidBackup, saveSession } from './db'
+import { createCustomExercise, getCustomExercises, saveCustomExercise } from './exercise-db'
+import { exerciseFilters, filterExercises, recentExerciseIds, type ExerciseFilter } from './exercise-library'
 import { calculateExerciseStatistics, createSessionExercise, createSet, createSetsFromPrevious, createWorkoutSession, DEFAULT_REST_SECONDS, findLastCompletedSets, isSetCompleted, sessionHasCompletedSet } from './session'
-import type { BackupFile, Category, Exercise, SessionExercise, WorkoutExercise, WorkoutSection, WorkoutSession } from './types'
+import type { BackupFile, Category, CustomExerciseInput, Exercise, ExerciseTrackingMode, SessionExercise, WorkoutExercise, WorkoutSection, WorkoutSession } from './types'
 
 type Tab = 'today' | 'train' | 'plan' | 'exercises' | 'history' | 'settings'
 
@@ -14,8 +16,6 @@ const tabs: { id: Tab; label: string; icon: string }[] = [
   { id: 'history', label: 'Verlauf', icon: '↻' },
   { id: 'settings', label: 'Einstellungen', icon: '⚙' },
 ]
-
-const categories: Array<'Alle' | Category> = ['Alle', 'Brust', 'Rücken', 'Schultern', 'Arme', 'Beine', 'Core', 'Mobility', 'Knie', 'Nacken/HWS']
 
 const sectionLabels: Record<WorkoutSection, string> = {
   warmup: 'Warm-up & Mobility',
@@ -43,6 +43,7 @@ function sessionMinutes(session: WorkoutSession) {
 
 function App() {
   const [sessions, setSessions] = useState<WorkoutSession[]>([])
+  const [customExercises, setCustomExercises] = useState<Exercise[]>([])
   const [active, setActive] = useState<WorkoutSession | null>(null)
   const [tab, setTab] = useState<Tab>('today')
   const [detailId, setDetailId] = useState<string | null>(null)
@@ -54,14 +55,12 @@ function App() {
     const all = await getAllSessions()
     setSessions(all)
     setActive(all.find((session) => session.status === 'active') ?? null)
-    setLoading(false)
   }
 
   useEffect(() => {
-    refresh().catch(() => {
-      setLoading(false)
-      setToast('Lokale Daten konnten nicht geladen werden.')
-    })
+    Promise.all([refresh(), getCustomExercises().then(setCustomExercises)])
+      .catch(() => setToast('Lokale Daten konnten nicht vollständig geladen werden.'))
+      .finally(() => setLoading(false))
   }, [])
 
   useEffect(() => {
@@ -118,6 +117,20 @@ function App() {
     setToast('Training verworfen.')
   }
 
+  const allExercises = useMemo(() => [...systemExercises, ...customExercises], [customExercises])
+  const allExerciseById = useMemo(() => new Map(allExercises.map((exercise) => [exercise.id, exercise])), [allExercises])
+
+  const addCustomExercise = async (input: CustomExerciseInput) => {
+    const normalizedName = input.name.trim().toLocaleLowerCase('de')
+    if (!normalizedName) throw new Error('Bitte gib einen Namen ein.')
+    if (allExercises.some((exercise) => exercise.name.trim().toLocaleLowerCase('de') === normalizedName)) throw new Error('Eine Übung mit diesem Namen gibt es bereits.')
+    const created = createCustomExercise(input)
+    await saveCustomExercise(created)
+    setCustomExercises((current) => [...current, created].sort((left, right) => left.name.localeCompare(right.name, 'de')))
+    setToast('Eigene Übung gespeichert.')
+    return created
+  }
+
   const completed = sessions.filter((session) => session.status === 'completed')
   const latest = completed[0]
 
@@ -126,10 +139,10 @@ function App() {
   let content: ReactNode
   if (tab === 'today') content = <Today latest={latest} active={active} onBegin={begin} onOpenHistory={(id) => navigate('history', id)} />
   else if (tab === 'train') content = active
-    ? <ActiveWorkout session={active} history={completed} onChange={setActive} onComplete={complete} onAbort={abort} onToast={setToast} />
+    ? <ActiveWorkout session={active} history={completed} availableExercises={allExercises} availableExerciseById={allExerciseById} onCreateCustom={addCustomExercise} onChange={setActive} onComplete={complete} onAbort={abort} onToast={setToast} />
     : <Train onBegin={begin} />
   else if (tab === 'plan') content = <Plan selectedId={planId} onSelect={(id) => navigate('plan', id)} onBegin={begin} />
-  else if (tab === 'exercises') content = <Exercises sessions={completed} />
+  else if (tab === 'exercises') content = <Exercises sessions={completed} availableExercises={allExercises} onCreateCustom={addCustomExercise} />
   else if (tab === 'history') content = <History sessions={completed} detailId={detailId} onOpen={(id) => navigate('history', id)} onBack={() => navigate('history')} onDelete={async (id) => { await deleteSession(id); await refresh(); navigate('history'); setToast('Eintrag gelöscht.') }} />
   else content = <Settings sessions={sessions} onRefresh={refresh} onToast={setToast} />
 
@@ -203,7 +216,7 @@ function Plan({ selectedId, onSelect, onBegin }: { selectedId: string | null; on
       {(unit.kind === 'strength' ? (['warmup', 'strength', 'core', 'cooldown'] as WorkoutSection[]) : ['routine'] as WorkoutSection[]).map((section) => {
         const sectionSteps = unit.steps.filter((step) => (step.section ?? 'routine') === section)
         if (!sectionSteps.length) return null
-        return <section className={section === 'strength' ? 'plan-section strength' : 'plan-section'} key={section}><div className="plan-section-title"><span>{sectionLabels[section]}</span><small>{sectionSteps.length} Übungen</small></div><div className="plan-list">{sectionSteps.map((item, index) => { const exercise = exerciseById.get(item.exerciseId); return <article className="plan-step" key={item.templateExerciseId ?? `${item.exerciseId}-${index}`}><span>{String(index + 1).padStart(2, '0')}</span><div><h3>{exercise?.name}</h3><strong>{item.prescription}</strong><p>{item.note}</p></div></article> })}</div></section>
+        return <section className={section === 'strength' ? 'plan-section strength' : 'plan-section'} key={section}><div className="plan-section-title"><span>{sectionLabels[section]}</span><small>{sectionSteps.length} Übungen</small></div><div className="plan-list">{sectionSteps.map((item, index) => { const exercise = systemExerciseById.get(item.exerciseId); return <article className="plan-step" key={item.templateExerciseId ?? `${item.exerciseId}-${index}`}><span>{String(index + 1).padStart(2, '0')}</span><div><h3>{exercise?.name}</h3><strong>{item.prescription}</strong><p>{item.note}</p></div></article> })}</div></section>
       })}
       <button className="primary wide sticky-action" onClick={() => onBegin(unit.id)}>Einheit starten</button>
     </>
@@ -216,18 +229,22 @@ function Plan({ selectedId, onSelect, onBegin }: { selectedId: string | null; on
   </>
 }
 
-function Exercises({ sessions }: { sessions: WorkoutSession[] }) {
-  const [category, setCategory] = useState<'Alle' | Category>('Alle')
+function Exercises({ sessions, availableExercises, onCreateCustom }: { sessions: WorkoutSession[]; availableExercises: Exercise[]; onCreateCustom: (input: CustomExerciseInput) => Promise<Exercise> }) {
+  const [filter, setFilter] = useState<ExerciseFilter>('all')
   const [query, setQuery] = useState('')
   const [openId, setOpenId] = useState<string | null>(null)
-  const filtered = exercises.filter((item) => (category === 'Alle' || item.category === category) && item.name.toLowerCase().includes(query.toLowerCase()))
-  return <><PageHeader eyebrow={`${exercises.length} Übungen aus deinem Plan`} title="Übungen" text="Hinweise werden nur so angezeigt, wie sie im Trainingsplan stehen." />
+  const [creating, setCreating] = useState(false)
+  const recentIds = useMemo(() => recentExerciseIds(sessions), [sessions])
+  const filtered = useMemo(() => filterExercises(availableExercises, query, filter, recentIds), [availableExercises, filter, query, recentIds])
+  return <><PageHeader eyebrow={`${availableExercises.length} Übungen in deiner Bibliothek`} title="Übungen" text="Suche nach Name, Kategorie oder Muskelgruppe." />
+    <button className="create-exercise-button" onClick={() => setCreating((value) => !value)}>+ Eigene Übung erstellen</button>
+    {creating && <CustomExerciseForm onCreate={async (input) => { await onCreateCustom(input); setCreating(false) }} onCancel={() => setCreating(false)} />}
     <label className="search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Übung suchen" /></label>
-    <div className="filter-row">{categories.map((item) => <button key={item} className={category === item ? 'chip active' : 'chip'} onClick={() => setCategory(item)}>{item}</button>)}</div>
+    <div className="filter-row">{exerciseFilters.map((item) => <button key={item.id} className={filter === item.id ? 'chip active' : 'chip'} onClick={() => setFilter(item.id)}>{item.label}</button>)}</div>
     <div className="exercise-list">{filtered.map((item) => <article className={openId === item.id ? 'exercise-library-card open' : 'exercise-library-card'} key={item.id}>
-      <button className="exercise-summary" onClick={() => setOpenId(openId === item.id ? null : item.id)}><ExerciseArt category={item.category} /><span><small>{item.category}</small><strong>{item.name}</strong><em>{item.goal}</em></span><b>{openId === item.id ? '−' : '+'}</b></button>
-      {openId === item.id && <div className="exercise-details"><Info label="Ausführung" value={item.execution} /><Info label="Häufige Fehler" value={item.mistakes} /><Info label="Leichter" value={item.easier} /><Info label="Schwieriger" value={item.harder} /><Info label="Ersatz" value={item.substitute} />{strengthExerciseIds.has(item.id) && <ExerciseProgress exercise={item} sessions={sessions} />}</div>}
-    </article>)}</div>
+      <button className="exercise-summary" onClick={() => setOpenId(openId === item.id ? null : item.id)}><ExerciseArt category={item.category} /><span><small>{item.custom ? 'Eigene Übung' : item.category}</small><strong>{item.name}</strong><em>{item.primaryMuscle} · {item.equipment}</em></span><b>{openId === item.id ? '−' : '+'}</b></button>
+      {openId === item.id && <div className="exercise-details"><Info label="Kategorie" value={`${item.category} · ${item.primaryMuscle}`} /><Info label="Tracking" value={trackingModeLabel(item.trackingMode)} /><Info label="Ausführung" value={item.execution} /><Info label="Häufige Fehler" value={item.mistakes} /><Info label="Leichter" value={item.easier} /><Info label="Schwieriger" value={item.harder} /><Info label="Ersatz" value={item.substitute} />{(strengthExerciseIds.has(item.id) || item.custom) && <ExerciseProgress exercise={item} sessions={sessions} />}</div>}
+    </article>)}{filtered.length === 0 && <div className="picker-empty">Keine passende Übung gefunden.</div>}</div>
   </>
 }
 
@@ -263,7 +280,7 @@ function Info({ label, value }: { label: string; value: string }) {
   return <div className="info-row"><strong>{label}</strong><p className={value.startsWith('Im Trainingsplan') ? 'muted' : ''}>{value}</p></div>
 }
 
-function ActiveWorkout({ session, history, onChange, onComplete, onAbort, onToast }: { session: WorkoutSession; history: WorkoutSession[]; onChange: (session: WorkoutSession) => void; onComplete: (session: WorkoutSession) => void; onAbort: (sessionId: string) => Promise<void>; onToast: (message: string) => void }) {
+function ActiveWorkout({ session, history, availableExercises, availableExerciseById, onCreateCustom, onChange, onComplete, onAbort, onToast }: { session: WorkoutSession; history: WorkoutSession[]; availableExercises: Exercise[]; availableExerciseById: Map<string, Exercise>; onCreateCustom: (input: CustomExerciseInput) => Promise<Exercise>; onChange: (session: WorkoutSession) => void; onComplete: (session: WorkoutSession) => void; onAbort: (sessionId: string) => Promise<void>; onToast: (message: string) => void }) {
   const [finishOpen, setFinishOpen] = useState(false)
   const [abortOpen, setAbortOpen] = useState(false)
   const [emptyOpen, setEmptyOpen] = useState(false)
@@ -357,19 +374,22 @@ function ActiveWorkout({ session, history, onChange, onComplete, onAbort, onToas
   }
 
   const renderStrengthExercise = (item: SessionExercise, exerciseIndex: number) => {
-    const detail = exerciseById.get(item.exerciseId)
+    const detail = availableExerciseById.get(item.exerciseId)
+    const trackingMode = detail?.trackingMode ?? 'weight_reps'
+    const usesWeight = trackingMode === 'weight_reps'
+    const repetitionLabel = trackingMode === 'duration' ? 'Sek.' : 'Wdh.'
     const previousSets = findLastCompletedSets(history, item.exerciseId)
     return <article className={item.skipped ? 'workout-exercise skipped' : 'workout-exercise'} key={item.id} data-exercise-id={item.exerciseId}>
-      <div className="exercise-head"><span className="exercise-index">{String(session.exercises.filter((exercise) => exercise.section === 'strength' && !exercise.removed).findIndex((exercise) => exercise.id === item.id) + 1).padStart(2, '0')}</span><div><h2>{item.exerciseName}</h2><p>{item.prescription} · {item.note}</p>{item.source !== 'template' && <span className={`source-badge ${item.source}`}>{item.source === 'added' ? 'Heute hinzugefügt' : `Heute ersetzt: ${exerciseById.get(item.replacedExerciseId ?? '')?.name ?? item.replacedExerciseId}`}</span>}</div><details className="session-exercise-menu"><summary aria-label={`${item.exerciseName} Aktionen`}>…</summary><div><button onClick={() => setPicker({ mode: 'replace', exerciseIndex })}>Für heute ersetzen</button><button onClick={() => updateExercise(exerciseIndex, (exercise) => ({ ...exercise, removed: true }))}>Für heute entfernen</button><button onClick={() => updateExercise(exerciseIndex, (exercise) => ({ ...exercise, skipped: !exercise.skipped }))}>{item.skipped ? 'Übung fortsetzen' : 'Überspringen'}</button></div></details></div>
+      <div className="exercise-head"><span className="exercise-index">{String(session.exercises.filter((exercise) => exercise.section === 'strength' && !exercise.removed).findIndex((exercise) => exercise.id === item.id) + 1).padStart(2, '0')}</span><div><h2>{item.exerciseName}</h2><p>{item.prescription} · {item.note}</p>{item.source !== 'template' && <span className={`source-badge ${item.source}`}>{item.source === 'added' ? 'Heute hinzugefügt' : `Heute ersetzt: ${availableExerciseById.get(item.replacedExerciseId ?? '')?.name ?? item.replacedExerciseId}`}</span>}</div><details className="session-exercise-menu"><summary aria-label={`${item.exerciseName} Aktionen`}>…</summary><div><button onClick={() => setPicker({ mode: 'replace', exerciseIndex })}>Für heute ersetzen</button><button onClick={() => updateExercise(exerciseIndex, (exercise) => ({ ...exercise, removed: true }))}>Für heute entfernen</button><button onClick={() => updateExercise(exerciseIndex, (exercise) => ({ ...exercise, skipped: !exercise.skipped }))}>{item.skipped ? 'Übung fortsetzen' : 'Überspringen'}</button></div></details></div>
       {detail && <details className="instructions"><summary>Ausführung & Ersatz</summary><p>{detail.execution}</p><small>Ersatz: {detail.substitute}</small></details>}
       {previousSets.length > 0 && <div className="previous-values"><span>Letztes Mal</span><strong>{previousSets.map((set) => `${set.weight ? `${set.weight} kg × ` : ''}${set.reps || '–'}`).join(' · ')}</strong></div>}
       {!item.skipped && <>
         <div className="exercise-rest-setting"><span>Pause <strong>{formatSeconds(item.restSeconds)}</strong></span><div><button onClick={() => updateExercise(exerciseIndex, (exercise) => ({ ...exercise, restSeconds: Math.max(30, exercise.restSeconds - 30) }))}>−30</button><button onClick={() => updateExercise(exerciseIndex, (exercise) => ({ ...exercise, restSeconds: Math.min(600, exercise.restSeconds + 30) }))}>+30</button></div></div>
-        <div className="set-labels"><span>Satz</span><span>kg</span><span>Wdh.</span><span>RIR</span><span>Fertig</span></div>
+        <div className="set-labels"><span>Satz</span><span>{usesWeight ? 'kg' : '–'}</span><span>{repetitionLabel}</span><span>RIR</span><span>Fertig</span></div>
         <div className="sets">{item.sets.map((set, setIndex) => <div className={set.done ? 'set-row done' : 'set-row'} key={set.id}>
           <span className="set-number">{setIndex + 1}</span>
-          <input aria-label={`${item.exerciseName} Gewicht Satz ${setIndex + 1}`} inputMode="decimal" placeholder={previousSets[setIndex]?.weight || '–'} value={set.weight} onChange={(event) => updateExercise(exerciseIndex, (exercise) => ({ ...exercise, sets: exercise.sets.map((current) => current.id === set.id ? { ...current, weight: event.target.value.replace('.', ',') } : current) }))} />
-          <input aria-label={`${item.exerciseName} Wiederholungen Satz ${setIndex + 1}`} inputMode="numeric" placeholder={previousSets[setIndex]?.reps || '–'} value={set.reps} onChange={(event) => updateExercise(exerciseIndex, (exercise) => ({ ...exercise, sets: exercise.sets.map((current) => current.id === set.id ? { ...current, reps: event.target.value } : current) }))} />
+          <input disabled={!usesWeight} aria-label={`${item.exerciseName} Gewicht Satz ${setIndex + 1}`} inputMode="decimal" placeholder={usesWeight ? previousSets[setIndex]?.weight || '–' : '–'} value={usesWeight ? set.weight : ''} onChange={(event) => updateExercise(exerciseIndex, (exercise) => ({ ...exercise, sets: exercise.sets.map((current) => current.id === set.id ? { ...current, weight: event.target.value.replace('.', ',') } : current) }))} />
+          <input aria-label={`${item.exerciseName} ${trackingMode === 'duration' ? 'Dauer' : 'Wiederholungen'} Satz ${setIndex + 1}`} inputMode="numeric" placeholder={previousSets[setIndex]?.reps || '–'} value={set.reps} onChange={(event) => updateExercise(exerciseIndex, (exercise) => ({ ...exercise, sets: exercise.sets.map((current) => current.id === set.id ? { ...current, reps: event.target.value } : current) }))} />
           <input aria-label={`${item.exerciseName} RIR Satz ${setIndex + 1}`} inputMode="numeric" placeholder="–" value={set.rir} onChange={(event) => updateExercise(exerciseIndex, (exercise) => ({ ...exercise, sets: exercise.sets.map((current) => current.id === set.id ? { ...current, rir: event.target.value } : current) }))} />
           <button aria-label={`${item.exerciseName} Satz ${setIndex + 1} abhaken`} className="check-button" onClick={() => toggleSet(exerciseIndex, set.id)}>{set.done ? '✓' : ''}</button>
         </div>)}</div>
@@ -397,7 +417,7 @@ function ActiveWorkout({ session, history, onChange, onComplete, onAbort, onToas
     {finishOpen && <FinishSheet session={{ ...session, durationMinutes: session.durationMinutes || elapsed }} onClose={() => setFinishOpen(false)} onComplete={completeCurrentSession} />}
     {abortOpen && <AbortWorkoutSheet onClose={() => setAbortOpen(false)} onAbort={abortCurrentSession} />}
     {emptyOpen && <EmptyWorkoutSheet onClose={() => setEmptyOpen(false)} onAbort={abortCurrentSession} />}
-    {picker && <ExercisePicker mode={picker.mode} currentExerciseId={picker.exerciseIndex === undefined ? undefined : session.exercises[picker.exerciseIndex]?.exerciseId} onSelect={chooseExercise} onClose={() => setPicker(null)} />}
+    {picker && <ExercisePicker mode={picker.mode} currentExerciseId={picker.exerciseIndex === undefined ? undefined : session.exercises[picker.exerciseIndex]?.exerciseId} availableExercises={availableExercises} recentIds={recentExerciseIds(history)} onCreateCustom={onCreateCustom} onSelect={chooseExercise} onClose={() => setPicker(null)} />}
   </div>
 }
 
@@ -413,10 +433,60 @@ function formatSeconds(seconds: number) {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
 }
 
-function ExercisePicker({ mode, currentExerciseId, onSelect, onClose }: { mode: 'add' | 'replace'; currentExerciseId?: string; onSelect: (exercise: Exercise) => void; onClose: () => void }) {
+function trackingModeLabel(mode: ExerciseTrackingMode) {
+  if (mode === 'weight_reps') return 'Gewicht + Wiederholungen'
+  if (mode === 'reps_only') return 'Nur Wiederholungen'
+  if (mode === 'duration') return 'Dauer'
+  return 'Körpergewicht + Wiederholungen'
+}
+
+function ExercisePicker({ mode, currentExerciseId, availableExercises, recentIds, onCreateCustom, onSelect, onClose }: { mode: 'add' | 'replace'; currentExerciseId?: string; availableExercises: Exercise[]; recentIds: string[]; onCreateCustom: (input: CustomExerciseInput) => Promise<Exercise>; onSelect: (exercise: Exercise) => void; onClose: () => void }) {
   const [query, setQuery] = useState('')
-  const candidates = exercises.filter((exercise) => exercise.id !== currentExerciseId && strengthExerciseIds.has(exercise.id) && exercise.name.toLowerCase().includes(query.toLowerCase()))
-  return <div className="sheet-backdrop"><section className="exercise-picker" role="dialog" aria-modal="true"><div className="sheet-handle" /><div className="sheet-title"><div><span className="eyebrow">Nur diese Session</span><h2>{mode === 'add' ? 'Übung hinzufügen' : 'Übung ersetzen'}</h2></div><button className="icon-button" onClick={onClose}>×</button></div><label className="search"><span>⌕</span><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Übung suchen" /></label><div className="picker-list">{candidates.map((exercise) => <button key={exercise.id} onClick={() => onSelect(exercise)}><ExerciseArt category={exercise.category} /><span><strong>{exercise.name}</strong><small>{exercise.category}</small></span><b>+</b></button>)}</div></section></div>
+  const [filter, setFilter] = useState<ExerciseFilter>('all')
+  const [creating, setCreating] = useState(false)
+  const eligible = useMemo(() => availableExercises.filter((exercise) => exercise.id !== currentExerciseId), [availableExercises, currentExerciseId])
+  const candidates = useMemo(() => filterExercises(eligible, query, filter, recentIds), [eligible, filter, query, recentIds])
+
+  return <div className="sheet-backdrop"><section className="exercise-picker" role="dialog" aria-modal="true"><div className="sheet-handle" /><div className="sheet-title"><div><span className="eyebrow">Nur diese Session</span><h2>{mode === 'add' ? 'Übung hinzufügen' : 'Übung ersetzen'}</h2></div><button className="icon-button" onClick={onClose}>×</button></div>
+    {creating ? <CustomExerciseForm onCreate={async (input) => onSelect(await onCreateCustom(input))} onCancel={() => setCreating(false)} /> : <>
+      <button className="create-exercise-button compact" onClick={() => setCreating(true)}>+ Eigene Übung erstellen</button>
+      <label className="search"><span>⌕</span><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Name, Kategorie oder Muskel" /></label>
+      <div className="filter-row picker-filters">{exerciseFilters.map((item) => <button key={item.id} className={filter === item.id ? 'chip active' : 'chip'} onClick={() => setFilter(item.id)}>{item.label}</button>)}</div>
+      <div className="picker-list">{candidates.map((exercise) => <button key={exercise.id} onClick={() => onSelect(exercise)}><ExerciseArt category={exercise.category} /><span><strong>{exercise.name}</strong><small>{exercise.primaryMuscle} · {exercise.equipment}{exercise.custom ? ' · Eigene Übung' : ''}</small></span><b>+</b></button>)}{candidates.length === 0 && <div className="picker-empty">{filter === 'recent' && recentIds.length === 0 ? 'Noch keine verwendeten Übungen.' : 'Keine passende Übung gefunden.'}</div>}</div>
+    </>}
+  </section></div>
+}
+
+function CustomExerciseForm({ onCreate, onCancel }: { onCreate: (input: CustomExerciseInput) => Promise<void | Exercise>; onCancel: () => void }) {
+  const [draft, setDraft] = useState<CustomExerciseInput>({ name: '', category: 'Brust', trackingMode: 'weight_reps', primaryMuscle: '', equipment: '', laterality: 'bilateral' })
+  const [error, setError] = useState('')
+  const [saving, setSaving] = useState(false)
+  const categories: Category[] = ['Brust', 'Rücken', 'Schultern', 'Arme', 'Beine', 'Core', 'Mobility', 'Knie', 'Nacken/HWS']
+  const save = async () => {
+    if (!draft.name.trim()) {
+      setError('Bitte gib einen Namen ein.')
+      return
+    }
+    setSaving(true)
+    setError('')
+    try {
+      await onCreate(draft)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Die Übung konnte nicht gespeichert werden.')
+      setSaving(false)
+    }
+  }
+  return <div className="custom-exercise-form">
+    <p>Die Übung wird dauerhaft nur auf diesem Gerät gespeichert.</p>
+    <label className="field"><span>Name *</span><input autoFocus value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="z. B. Hack Squat neues Gerät" /></label>
+    <label className="field"><span>Kategorie *</span><select value={draft.category} onChange={(event) => setDraft({ ...draft, category: event.target.value as Category })}>{categories.map((category) => <option key={category}>{category}</option>)}</select></label>
+    <label className="field"><span>Tracking *</span><select value={draft.trackingMode} onChange={(event) => setDraft({ ...draft, trackingMode: event.target.value as ExerciseTrackingMode })}><option value="weight_reps">Gewicht + Wiederholungen</option><option value="reps_only">Nur Wiederholungen</option><option value="duration">Dauer</option><option value="bodyweight_reps">Körpergewicht + Wiederholungen</option></select></label>
+    <label className="field"><span>Primäre Muskelgruppe</span><input value={draft.primaryMuscle} onChange={(event) => setDraft({ ...draft, primaryMuscle: event.target.value })} placeholder="optional" /></label>
+    <label className="field"><span>Equipment</span><input value={draft.equipment} onChange={(event) => setDraft({ ...draft, equipment: event.target.value })} placeholder="optional" /></label>
+    <label className="field"><span>Ausführung</span><select value={draft.laterality} onChange={(event) => setDraft({ ...draft, laterality: event.target.value as 'unilateral' | 'bilateral' })}><option value="bilateral">Beidseitig</option><option value="unilateral">Einseitig</option></select></label>
+    {error && <p className="form-error">{error}</p>}
+    <div className="custom-form-actions"><button className="secondary-button" onClick={onCancel}>Abbrechen</button><button className="primary" disabled={saving} onClick={save}>{saving ? 'Speichert …' : 'Übung speichern'}</button></div>
+  </div>
 }
 
 function AbortWorkoutSheet({ onClose, onAbort }: { onClose: () => void; onAbort: () => Promise<void> }) {
@@ -460,7 +530,7 @@ function HistoryDetail({ session, onBack, onDelete }: { session: WorkoutSession;
       const completedSets = item.sets.map((set, setIndex) => ({ set, setIndex })).filter(({ set }) => isSetCompleted(set))
       const notCompleted = !item.removed && !item.skipped && completedSets.length === 0
       const className = item.removed ? 'removed' : notCompleted ? 'not-completed' : ''
-      return <article className={className} key={item.id}><div><span>{String(index + 1).padStart(2, '0')}</span><h3>{item.exerciseName}</h3>{item.source === 'added' && <small className="history-source added">Hinzugefügt</small>}{item.source === 'replacement' && <small className="history-source replacement">Ersetzt {exerciseById.get(item.replacedExerciseId ?? '')?.name ?? item.replacedExerciseId}</small>}{item.removed && <small className="history-source removed">Für diese Session entfernt</small>}{item.skipped && !item.removed && <small>Übersprungen</small>}{notCompleted && <small className="history-source not-completed">Nicht durchgeführt</small>}{item.section !== 'strength' && completedSets.length > 0 && <small className="history-source completed">Abgehakt</small>}</div>{item.section === 'strength' && completedSets.length > 0 && <><div className="history-rest">Pause {formatSeconds(item.restSeconds)}</div><div className="history-sets">{completedSets.map(({ set, setIndex }) => <p key={set.id}><span>Satz {setIndex + 1}</span><strong>{set.weight ? `${set.weight} kg` : 'ohne Zusatzgewicht'} · {set.reps || '–'} Wdh.{set.rir ? ` · RIR ${set.rir}` : ''}{set.restSeconds ? ` · Pause ${formatSeconds(set.restSeconds)}` : ''}</strong><b>✓</b></p>)}</div></>}{item.userNote && <blockquote>{item.userNote}</blockquote>}</article>
+      return <article className={className} key={item.id}><div><span>{String(index + 1).padStart(2, '0')}</span><h3>{item.exerciseName}</h3>{item.source === 'added' && <small className="history-source added">Hinzugefügt</small>}{item.source === 'replacement' && <small className="history-source replacement">Ersetzt {systemExerciseById.get(item.replacedExerciseId ?? '')?.name ?? item.replacedExerciseId}</small>}{item.removed && <small className="history-source removed">Für diese Session entfernt</small>}{item.skipped && !item.removed && <small>Übersprungen</small>}{notCompleted && <small className="history-source not-completed">Nicht durchgeführt</small>}{item.section !== 'strength' && completedSets.length > 0 && <small className="history-source completed">Abgehakt</small>}</div>{item.section === 'strength' && completedSets.length > 0 && <><div className="history-rest">Pause {formatSeconds(item.restSeconds)}</div><div className="history-sets">{completedSets.map(({ set, setIndex }) => <p key={set.id}><span>Satz {setIndex + 1}</span><strong>{set.weight ? `${set.weight} kg` : 'ohne Zusatzgewicht'} · {set.reps || '–'} Wdh.{set.rir ? ` · RIR ${set.rir}` : ''}{set.restSeconds ? ` · Pause ${formatSeconds(set.restSeconds)}` : ''}</strong><b>✓</b></p>)}</div></>}{item.userNote && <blockquote>{item.userNote}</blockquote>}</article>
     })}</div>
     {session.note && <div className="session-note"><strong>Notiz</strong><p>{session.note}</p></div>}
     <button className="danger-button" onClick={() => { if (window.confirm('Dieses Training wirklich löschen?')) onDelete(session.id) }}>Training löschen</button>

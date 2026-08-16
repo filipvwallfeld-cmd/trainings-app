@@ -9,6 +9,9 @@ export type Category =
   | 'Knie'
   | 'Nacken/HWS'
 
+export type ExerciseTrackingMode = 'weight_reps' | 'reps_only' | 'duration' | 'bodyweight_reps'
+export type ExerciseLaterality = 'unilateral' | 'bilateral'
+
 export type Exercise = {
   id: string
   name: string
@@ -19,6 +22,21 @@ export type Exercise = {
   easier: string
   harder: string
   substitute: string
+  primaryMuscle: string
+  secondaryMuscles?: string[]
+  equipment: string
+  laterality: ExerciseLaterality
+  trackingMode: ExerciseTrackingMode
+  custom: boolean
+}
+
+export type CustomExerciseInput = {
+  name: string
+  category: Category
+  trackingMode: ExerciseTrackingMode
+  primaryMuscle?: string
+  equipment?: string
+  laterality?: ExerciseLaterality
 }
 
 export type WorkoutSection = 'warmup' | 'strength' | 'core' | 'cooldown' | 'routine'

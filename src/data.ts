@@ -1,6 +1,46 @@
-import type { Category, Exercise, PlanUnit, RoutineStep, WorkoutSection } from './types'
+import type { Category, Exercise, ExerciseLaterality, ExerciseTrackingMode, PlanUnit, RoutineStep, WorkoutSection } from './types'
 
 const missing = 'Im Trainingsplan nicht angegeben.'
+
+function inferPrimaryMuscle(id: string, name: string, category: Category) {
+  const value = `${id} ${name}`.toLowerCase()
+  if (category === 'Brust') return 'Brust'
+  if (category === 'Rücken') return value.includes('deadlift') || value.includes('kreuzheben') || value.includes('back extension') ? 'Hintere Kette' : 'Rücken'
+  if (category === 'Schultern') return value.includes('reverse') || value.includes('face pull') ? 'Hintere Schulter' : 'Schultern'
+  if (category === 'Arme') return value.includes('curl') || value.includes('bizeps') || value.includes('hammer') ? 'Bizeps' : 'Trizeps'
+  if (category === 'Core') return 'Core'
+  if (category === 'Knie') return value.includes('step') ? 'Quadrizeps' : 'Knie'
+  if (category === 'Beine') {
+    if (value.includes('calf') || value.includes('wade') || value.includes('soleus')) return 'Waden'
+    if (value.includes('hip') || value.includes('glute') || value.includes('beinbeuger') || value.includes('leg curl') || value.includes('pull through') || value.includes('kickback')) return 'Gesäß / hintere Kette'
+    return 'Beine'
+  }
+  return category
+}
+
+function inferEquipment(id: string, name: string) {
+  const value = `${id} ${name}`.toLowerCase()
+  if (value.includes('bodyweight') || value.includes('liegestütz') || value.includes('push-up') || value.includes('klimm') || value.includes('pull-up') || value.includes('plank') || value.includes('bird dog') || value.includes('dead bug')) return 'Körpergewicht'
+  if (value.includes('cable') || value.includes('kabel') || value.includes('pushdown') || value.includes('face pull') || value.includes('lat-pulldown') || value.includes('latzug')) return 'Kabelzug'
+  if (value.includes('dumbbell') || value.includes('kurzhantel') || value.includes('goblet')) return 'Kurzhanteln'
+  if (value.includes('barbell') || value.includes('langhantel') || value.includes('sz-') || value.includes('ez-bar')) return 'Langhantel'
+  if (value.includes('machine') || value.includes('maschine') || value.includes('press') || value.includes('beinpresse') || value.includes('beinstrecker') || value.includes('beinbeuger')) return 'Maschine'
+  if (value.includes('band') || value.includes('monster walk') || value.includes('tke')) return 'Band'
+  return 'Körpergewicht / Gerät'
+}
+
+function inferLaterality(id: string, name: string): ExerciseLaterality {
+  const value = `${id} ${name}`.toLowerCase()
+  return value.includes('single') || value.includes('einarm') || value.includes('einbein') || value.includes('unilateral') || value.includes('split squat') || value.includes('lunge') || value.includes('step-up') || value.includes('step-down') ? 'unilateral' : 'bilateral'
+}
+
+function inferTrackingMode(id: string, name: string, category: Category): ExerciseTrackingMode {
+  const value = `${id} ${name}`.toLowerCase()
+  if (category === 'Mobility' || category === 'Nacken/HWS') return 'duration'
+  if (value.includes('plank') || value.includes('carry') || value.includes('einbeinstand') || value.includes('bike') || value.includes('gehen') || value.includes('walk')) return 'duration'
+  if (value.includes('push-up') || value.includes('liegestütz') || value.includes('pull-up') || value.includes('klimm') || value === 'dips') return 'bodyweight_reps'
+  return 'weight_reps'
+}
 
 function exercise(
   id: string,
@@ -13,7 +53,22 @@ function exercise(
   harder = missing,
   substitute = missing,
 ): Exercise {
-  return { id, name, category, goal, execution, mistakes, easier, harder, substitute }
+  return {
+    id,
+    name,
+    category,
+    goal,
+    execution,
+    mistakes,
+    easier,
+    harder,
+    substitute,
+    primaryMuscle: inferPrimaryMuscle(id, name, category),
+    equipment: inferEquipment(id, name),
+    laterality: inferLaterality(id, name),
+    trackingMode: inferTrackingMode(id, name, category),
+    custom: false,
+  }
 }
 
 export const exercises: Exercise[] = [

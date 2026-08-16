@@ -122,6 +122,8 @@ p, h1, h2, h3 { margin-top: 0; }
 .search { height: 52px; border-radius: 16px; border: 1px solid var(--line); background: var(--surface); display: flex; align-items: center; gap: 10px; padding: 0 15px; }
 .search span { color: var(--muted); font-size: 1.25rem; }
 .search input { width: 100%; border: 0; outline: 0; background: transparent; color: var(--text); font-size: 1rem; }
+.create-exercise-button { width: 100%; min-height: 48px; margin-bottom: 12px; border: 1px dashed rgba(200,244,91,.4); border-radius: 15px; background: rgba(200,244,91,.05); color: var(--lime); font-weight: 800; cursor: pointer; }
+.create-exercise-button.compact { min-height: 42px; margin-bottom: 10px; }
 .filter-row { display: flex; gap: 8px; overflow-x: auto; padding: 14px 0 18px; scrollbar-width: none; }
 .filter-row::-webkit-scrollbar { display: none; }
 .chip { flex: 0 0 auto; border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 9px 13px; color: var(--muted); cursor: pointer; }
@@ -250,12 +252,14 @@ p, h1, h2, h3 { margin-top: 0; }
 .sheet-backdrop { position: fixed; z-index: 60; inset: 0; background: rgba(0,0,0,.72); display: flex; align-items: flex-end; justify-content: center; }
 .finish-sheet { width: min(100%, 620px); max-height: 91vh; overflow-y: auto; background: #14171d; border: 1px solid #303640; border-radius: 28px 28px 0 0; padding: 10px 19px calc(24px + env(safe-area-inset-bottom)); box-shadow: 0 -30px 80px rgba(0,0,0,.5); }
 .exercise-picker { width: min(100%, 620px); max-height: 88vh; overflow: hidden; display: flex; flex-direction: column; background: #14171d; border: 1px solid #303640; border-radius: 28px 28px 0 0; padding: 10px 19px calc(20px + env(safe-area-inset-bottom)); box-shadow: 0 -30px 80px rgba(0,0,0,.5); }
-.picker-list { overflow-y: auto; display: grid; gap: 8px; padding-top: 13px; }
+.picker-filters { padding: 10px 0; }
+.picker-list { overflow-y: auto; display: grid; gap: 8px; padding-top: 3px; }
 .picker-list > button { min-height: 66px; border: 1px solid var(--line); border-radius: 15px; background: var(--surface); padding: 8px; display: grid; grid-template-columns: 48px 1fr 25px; gap: 10px; align-items: center; text-align: left; }
 .picker-list .exercise-art { width: 48px; height: 48px; }
 .picker-list > button > span { display: flex; flex-direction: column; gap: 4px; }
 .picker-list small { color: var(--muted); }
 .picker-list > button > b { color: var(--lime); font-size: 1.2rem; }
+.picker-empty { border: 1px dashed var(--line); border-radius: 15px; padding: 24px 15px; color: var(--muted); text-align: center; }
 .sheet-handle { width: 42px; height: 5px; background: #3d444f; border-radius: 99px; margin: 0 auto 18px; }
 .sheet-title { display: flex; justify-content: space-between; align-items: start; }
 .sheet-title h2 { margin: 6px 0 20px; font-size: 1.55rem; }
@@ -268,7 +272,15 @@ p, h1, h2, h3 { margin-top: 0; }
 .destructive-button { border: 1px solid rgba(255,107,107,.45); background: #32191c; color: #ff9a9a; }
 .field { display: block; margin-bottom: 17px; }
 .field > span, .range-field > span { display: flex; justify-content: space-between; margin-bottom: 8px; color: #b3bac4; font-size: .83rem; font-weight: 700; }
+.field > input, .field > select { width: 100%; height: 48px; border: 1px solid #343a45; border-radius: 13px; background: #0d1014; color: var(--text); padding: 0 12px; font-size: .95rem; }
 .field textarea { width: 100%; min-height: 85px; resize: vertical; border: 1px solid #343a45; border-radius: 13px; background: #0d1014; color: var(--text); padding: 12px; }
+.custom-exercise-form { overflow-y: auto; padding: 4px 1px 2px; }
+.custom-exercise-form > p { margin: 0 0 16px; color: var(--muted); font-size: .82rem; line-height: 1.45; }
+.custom-form-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-bottom: 8px; }
+.custom-form-actions .primary { border: 0; border-radius: 14px; font-weight: 800; }
+.custom-form-actions button:disabled { opacity: .55; }
+.form-error { color: #ff9a9a !important; margin-top: -5px !important; }
+.set-row input:disabled { opacity: .38; }
 .input-suffix { display: flex; border: 1px solid #343a45; border-radius: 13px; background: #0d1014; overflow: hidden; }
 .input-suffix input { min-width: 0; width: 100%; height: 48px; padding: 0 13px; background: transparent; border: 0; color: var(--text); }
 .input-suffix b { display: grid; place-items: center; padding: 0 14px; color: var(--muted); font-size: .8rem; }
