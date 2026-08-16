@@ -1,4 +1,4 @@
-const CACHE_NAME = 'trainings-app-v3'
+const CACHE_NAME = 'trainings-app-v4'
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -23,6 +23,20 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET' || new URL(event.request.url).origin !== self.location.origin) return
 
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      fetch(event.request, { cache: 'no-store' })
+        .then((response) => {
+          if (!response || response.status !== 200) return response
+          const copy = response.clone()
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy))
+          return response
+        })
+        .catch(() => caches.match(event.request).then((cached) => cached ?? caches.match('./index.html'))),
+    )
+    return
+  }
+
   event.respondWith(
     caches.match(event.request).then((cached) => {
       if (cached) return cached
@@ -33,7 +47,7 @@ self.addEventListener('fetch', (event) => {
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy))
           return response
         })
-        .catch(() => event.request.mode === 'navigate' ? caches.match('./index.html') : undefined)
+        .catch(() => undefined)
     }),
   )
 })
