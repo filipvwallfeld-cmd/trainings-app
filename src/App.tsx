@@ -1,18 +1,20 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react'
-import { exerciseById as systemExerciseById, exercises as systemExercises, freeWorkoutTemplate, medicalNotice, neckWarning, painRules, planUnits, strengthExerciseIds, unitById } from './data'
+import { exerciseById as systemExerciseById, exercises as systemExercises, freeWorkoutTemplate, medicalNotice, neckWarning, painRules, planUnits, unitById } from './data'
 import { clearSessions, deleteSession, getAllSessions, importBackup, isValidBackup, saveSession } from './db'
 import { createCustomExercise, getCustomExercises, saveCustomExercise } from './exercise-db'
 import { exerciseFilters, filterExercises, recentExerciseIds, type ExerciseFilter } from './exercise-library'
-import { calculateExerciseStatistics, createSessionExercise, createSet, createSetsFromPrevious, createWorkoutSession, DEFAULT_REST_SECONDS, findLastCompletedSets, isSetCompleted, sessionHasCompletedSet } from './session'
+import { createSessionExercise, createSet, createSetsFromPrevious, createWorkoutSession, DEFAULT_REST_SECONDS, findLastCompletedSets, isSetCompleted, sessionHasCompletedSet } from './session'
+import { calculateExerciseStatistics, calculateProgressEntries, calculateWorkoutSummary, toSetPerformance, type ExerciseProgressPoint, type ExerciseStatistics, type SetPerformance } from './statistics'
 import type { BackupFile, Category, CustomExerciseInput, Exercise, ExerciseTrackingMode, SessionExercise, WorkoutExercise, WorkoutSection, WorkoutSession } from './types'
 
-type Tab = 'today' | 'train' | 'plan' | 'exercises' | 'history' | 'settings'
+type Tab = 'today' | 'train' | 'plan' | 'exercises' | 'progress' | 'history' | 'settings'
 
 const tabs: { id: Tab; label: string; icon: string }[] = [
   { id: 'today', label: 'Heute', icon: '●' },
   { id: 'train', label: 'Trainieren', icon: '▶' },
   { id: 'plan', label: 'Plan', icon: '▤' },
   { id: 'exercises', label: 'Übungen', icon: '◇' },
+  { id: 'progress', label: 'Fortschritt', icon: '↗' },
   { id: 'history', label: 'Verlauf', icon: '↻' },
   { id: 'settings', label: 'Einstellungen', icon: '⚙' },
 ]
@@ -48,6 +50,7 @@ function App() {
   const [tab, setTab] = useState<Tab>('today')
   const [detailId, setDetailId] = useState<string | null>(null)
   const [planId, setPlanId] = useState<string | null>(null)
+  const [progressId, setProgressId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [toast, setToast] = useState('')
 
@@ -70,6 +73,7 @@ function App() {
       setTab(nextTab)
       setDetailId(nextTab === 'history' ? parts[1] ?? null : null)
       setPlanId(nextTab === 'plan' ? parts[1] ?? null : null)
+      setProgressId(nextTab === 'progress' ? parts[1] ?? null : null)
     }
     readHash()
     window.addEventListener('hashchange', readHash)
@@ -142,8 +146,9 @@ function App() {
     ? <ActiveWorkout session={active} history={completed} availableExercises={allExercises} availableExerciseById={allExerciseById} onCreateCustom={addCustomExercise} onChange={setActive} onComplete={complete} onAbort={abort} onToast={setToast} />
     : <Train onBegin={begin} />
   else if (tab === 'plan') content = <Plan selectedId={planId} onSelect={(id) => navigate('plan', id)} onBegin={begin} />
-  else if (tab === 'exercises') content = <Exercises sessions={completed} availableExercises={allExercises} onCreateCustom={addCustomExercise} />
-  else if (tab === 'history') content = <History sessions={completed} detailId={detailId} onOpen={(id) => navigate('history', id)} onBack={() => navigate('history')} onDelete={async (id) => { await deleteSession(id); await refresh(); navigate('history'); setToast('Eintrag gelöscht.') }} />
+  else if (tab === 'exercises') content = <Exercises sessions={completed} availableExercises={allExercises} onCreateCustom={addCustomExercise} onOpenProgress={(id) => navigate('progress', id)} />
+  else if (tab === 'progress') content = <Progress sessions={completed} availableExercises={allExercises} detailId={progressId} onOpen={(id) => navigate('progress', id)} onBack={() => navigate('progress')} />
+  else if (tab === 'history') content = <History sessions={completed} exerciseById={allExerciseById} detailId={detailId} onOpen={(id) => navigate('history', id)} onBack={() => navigate('history')} onDelete={async (id) => { await deleteSession(id); await refresh(); navigate('history'); setToast('Eintrag gelöscht.') }} />
   else content = <Settings sessions={sessions} onRefresh={refresh} onToast={setToast} />
 
   return (
@@ -229,7 +234,7 @@ function Plan({ selectedId, onSelect, onBegin }: { selectedId: string | null; on
   </>
 }
 
-function Exercises({ sessions, availableExercises, onCreateCustom }: { sessions: WorkoutSession[]; availableExercises: Exercise[]; onCreateCustom: (input: CustomExerciseInput) => Promise<Exercise> }) {
+function Exercises({ sessions, availableExercises, onCreateCustom, onOpenProgress }: { sessions: WorkoutSession[]; availableExercises: Exercise[]; onCreateCustom: (input: CustomExerciseInput) => Promise<Exercise>; onOpenProgress: (id: string) => void }) {
   const [filter, setFilter] = useState<ExerciseFilter>('all')
   const [query, setQuery] = useState('')
   const [openId, setOpenId] = useState<string | null>(null)
@@ -243,32 +248,99 @@ function Exercises({ sessions, availableExercises, onCreateCustom }: { sessions:
     <div className="filter-row">{exerciseFilters.map((item) => <button key={item.id} className={filter === item.id ? 'chip active' : 'chip'} onClick={() => setFilter(item.id)}>{item.label}</button>)}</div>
     <div className="exercise-list">{filtered.map((item) => <article className={openId === item.id ? 'exercise-library-card open' : 'exercise-library-card'} key={item.id}>
       <button className="exercise-summary" onClick={() => setOpenId(openId === item.id ? null : item.id)}><ExerciseArt category={item.category} /><span><small>{item.custom ? 'Eigene Übung' : item.category}</small><strong>{item.name}</strong><em>{item.primaryMuscle} · {item.equipment}</em></span><b>{openId === item.id ? '−' : '+'}</b></button>
-      {openId === item.id && <div className="exercise-details"><Info label="Kategorie" value={`${item.category} · ${item.primaryMuscle}`} /><Info label="Tracking" value={trackingModeLabel(item.trackingMode)} /><Info label="Ausführung" value={item.execution} /><Info label="Häufige Fehler" value={item.mistakes} /><Info label="Leichter" value={item.easier} /><Info label="Schwieriger" value={item.harder} /><Info label="Ersatz" value={item.substitute} />{(strengthExerciseIds.has(item.id) || item.custom) && <ExerciseProgress exercise={item} sessions={sessions} />}</div>}
+      {openId === item.id && <div className="exercise-details"><Info label="Kategorie" value={`${item.category} · ${item.primaryMuscle}`} /><Info label="Tracking" value={trackingModeLabel(item.trackingMode)} /><Info label="Ausführung" value={item.execution} /><Info label="Häufige Fehler" value={item.mistakes} /><Info label="Leichter" value={item.easier} /><Info label="Schwieriger" value={item.harder} /><Info label="Ersatz" value={item.substitute} /><ExerciseProgressPreview exercise={item} sessions={sessions} onOpen={() => onOpenProgress(item.id)} /></div>}
     </article>)}{filtered.length === 0 && <div className="picker-empty">Keine passende Übung gefunden.</div>}</div>
   </>
 }
 
-function ExerciseProgress({ exercise, sessions }: { exercise: Exercise; sessions: WorkoutSession[] }) {
-  const statistics = useMemo(() => calculateExerciseStatistics(sessions, exercise.id), [sessions, exercise.id])
-  const maxVolume = Math.max(1, ...statistics.points.map((point) => point.volume))
-  if (!statistics.points.length) return <div className="progress-empty"><strong>Kraftstatistik</strong><p>Noch keine abgeschlossenen Arbeitssätze für diese Übung.</p></div>
-  return <section className="exercise-progress"><div className="progress-title"><strong>Kraftstatistik</strong><small>{statistics.points.length} Einheiten</small></div><div className="progress-stats"><div><strong>{formatNumber(statistics.highestWeight)} kg</strong><small>Gewichtsrekord</small></div><div><strong>{formatNumber(statistics.volumeRecord)} kg</strong><small>Volumenrekord</small></div><div><strong>{statistics.totalWorkSets}</strong><small>Arbeitssätze</small></div><div><strong>{formatNumber(statistics.estimatedOneRepMax)} kg</strong><small>geschätztes 1RM</small></div></div><div className="volume-chart" aria-label="Volumenverlauf">{statistics.points.slice(-8).map((point) => <div key={point.sessionId}><span style={{ height: `${Math.max(8, (point.volume / maxVolume) * 100)}%` }} /><small>{new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: '2-digit' }).format(new Date(point.date))}</small></div>)}</div><p className="progress-summary">Gesamtvolumen {formatNumber(statistics.totalVolume)} kg · Höchste Wiederholungszahl {statistics.highestReps}</p></section>
+function ExerciseProgressPreview({ exercise, sessions, onOpen }: { exercise: Exercise; sessions: WorkoutSession[]; onOpen: () => void }) {
+  const statistics = calculateExerciseStatistics(sessions, exercise.id, exercise.trackingMode)
+  return <div className="progress-preview"><div><strong>{statistics.sessionCount ? `${statistics.sessionCount} ${statistics.sessionCount === 1 ? 'Training' : 'Trainings'}` : 'Noch kein Verlauf'}</strong><small>{statistics.latest ? `Zuletzt ${formatShortDay(statistics.latest.date)}` : 'Nach dem ersten abgeschlossenen Satz verfügbar'}</small></div><button onClick={onOpen}>Statistik öffnen ›</button></div>
 }
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat('de-DE', { maximumFractionDigits: 1 }).format(value)
 }
 
-function completedVolume(exercises: SessionExercise[]) {
-  return exercises.filter((exercise) => !exercise.removed && !exercise.skipped).flatMap((exercise) => exercise.sets).filter((set) => isSetCompleted(set)).reduce((sum, set) => {
-    const weight = Number(set.weight.replace(',', '.')) || 0
-    const reps = Number(set.reps) || 0
-    return sum + weight * reps
-  }, 0)
+function formatShortDay(value: string) {
+  return new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(value))
 }
 
-function completedExerciseCount(exercises: SessionExercise[]) {
-  return exercises.filter((exercise) => !exercise.removed && !exercise.skipped && exercise.sets.some((set) => isSetCompleted(set))).length
+function formatDuration(seconds: number) {
+  if (seconds < 60) return `${formatNumber(seconds)} Sek.`
+  return `${Math.floor(seconds / 60)}:${String(Math.round(seconds % 60)).padStart(2, '0')} Min`
+}
+
+function formatSetCount(count: number) {
+  return `${count} ${count === 1 ? 'Satz' : 'Sätze'}`
+}
+
+function formatSessionCount(count: number) {
+  return `${count} ${count === 1 ? 'Einheit' : 'Einheiten'}`
+}
+
+function formatSetPerformance(set: SetPerformance, trackingMode: ExerciseTrackingMode) {
+  if (trackingMode === 'duration') return set.durationSeconds !== null ? formatDuration(set.durationSeconds) : 'Dauer nicht eingetragen'
+  if (trackingMode === 'reps_only' || trackingMode === 'bodyweight_reps') return set.reps !== null ? `${formatNumber(set.reps)} Wdh.` : 'Wiederholungen nicht eingetragen'
+  if (set.weight !== null && set.reps !== null) return `${formatNumber(set.weight)} kg × ${formatNumber(set.reps)}`
+  if (set.weight !== null) return `${formatNumber(set.weight)} kg`
+  if (set.reps !== null) return `${formatNumber(set.reps)} Wdh.`
+  return 'Werte nicht eingetragen'
+}
+
+function latestPerformance(statistics: ExerciseStatistics) {
+  const latest = statistics.latest
+  if (!latest) return 'Noch kein Training'
+  if (statistics.trackingMode === 'duration') return `${latest.longestDurationSeconds !== null ? formatDuration(latest.longestDurationSeconds) : 'Dauer offen'} · ${formatSetCount(latest.workSets)}`
+  if (statistics.trackingMode === 'reps_only' || statistics.trackingMode === 'bodyweight_reps') return `${latest.maxReps !== null ? `${formatNumber(latest.maxReps)} Wdh.` : 'Wiederholungen offen'} · ${formatSetCount(latest.workSets)}`
+  const strongestSet = [...latest.sets].filter((set) => set.weight !== null).sort((left, right) => (right.weight ?? 0) - (left.weight ?? 0))[0]
+  return `${strongestSet ? formatSetPerformance(strongestSet, statistics.trackingMode) : 'Gewicht offen'} · ${formatSetCount(latest.workSets)}`
+}
+
+function Progress({ sessions, availableExercises, detailId, onOpen, onBack }: { sessions: WorkoutSession[]; availableExercises: Exercise[]; detailId: string | null; onOpen: (id: string) => void; onBack: () => void }) {
+  const entries = useMemo(() => calculateProgressEntries(sessions, availableExercises), [availableExercises, sessions])
+  const selectedExercise = detailId ? availableExercises.find((exercise) => exercise.id === detailId) : undefined
+  const detail = selectedExercise ? { exercise: selectedExercise, statistics: calculateExerciseStatistics(sessions, selectedExercise.id, selectedExercise.trackingMode) } : null
+  if (detail) return <ExerciseDetail exercise={detail.exercise} statistics={detail.statistics} onBack={onBack} />
+
+  return <><PageHeader eyebrow="Aus deinen abgeschlossenen Sätzen" title="Fortschritt" text="Nur Übungen mit echten historischen Leistungsdaten erscheinen hier." />
+    {entries.length === 0 ? <div className="empty-state"><span>↗</span><h2>Noch keine Leistungsdaten</h2><p>Schließe mindestens einen Satz ab. Danach erscheint die Übung hier.</p></div> : <div className="progress-list">{entries.map(({ exercise, statistics }) => <button key={exercise.id} onClick={() => onOpen(exercise.id)}><ExerciseArt category={exercise.category} /><span><strong>{exercise.name}</strong><small>{latestPerformance(statistics)}</small><em>{statistics.sessionCount} {statistics.sessionCount === 1 ? 'Training' : 'Trainings'} · {formatSetCount(statistics.totalWorkSets)}</em></span><b>›</b></button>)}</div>}
+  </>
+}
+
+function ExerciseDetail({ exercise, statistics, onBack }: { exercise: Exercise; statistics: ExerciseStatistics; onBack: () => void }) {
+  return <><button className="back-button" onClick={onBack}>← Fortschritt</button>
+    <header className="exercise-detail-header"><span className="eyebrow">{exercise.custom ? 'Eigene Übung' : exercise.category}</span><h1>{exercise.name}</h1><p>{exercise.primaryMuscle} · {exercise.equipment} · {trackingModeLabel(exercise.trackingMode)}</p></header>
+    <div className="exercise-kpis"><div className="wide"><small>Letztes Training</small><strong>{statistics.latest ? formatShortDay(statistics.latest.date) : '–'}</strong><span>{latestPerformance(statistics)}</span></div><div><small>Trainings</small><strong>{statistics.sessionCount}</strong></div><div><small>Arbeitssätze</small><strong>{statistics.totalWorkSets}</strong></div>{statistics.totalVolume !== null && <div className="wide"><small>Gesamtvolumen</small><strong>{formatNumber(statistics.totalVolume)} kg</strong></div>}</div>
+    {exercise.trackingMode === 'weight_reps' && <WeightProgressChart points={statistics.points} />}
+    <PersonalRecords statistics={statistics} />
+    <section className="exercise-history"><div className="detail-section-title"><h2>Verlauf</h2><span>{formatSessionCount(statistics.sessionCount)}</span></div>{statistics.points.length === 0 ? <div className="empty-card"><strong>Noch keine abgeschlossenen Sätze</strong><p>Diese Seite füllt sich nach dem ersten Training.</p></div> : [...statistics.points].reverse().map((point) => <article key={point.sessionId}><div><strong>{formatShortDay(point.date)}</strong><small>{point.sessionName} · {formatSetCount(point.workSets)}</small></div><div className="exercise-history-sets">{point.sets.map((set, index) => <p key={set.setId}><span>Satz {index + 1}</span><b>{formatSetPerformance(set, statistics.trackingMode)}</b>{set.rir && <small>RIR {set.rir}</small>}</p>)}</div>{point.volume !== null && <footer>Volumen <strong>{formatNumber(point.volume)} kg</strong></footer>}</article>)}</section>
+  </>
+}
+
+function WeightProgressChart({ points }: { points: ExerciseProgressPoint[] }) {
+  const values = points.filter((point): point is ExerciseProgressPoint & { maxWeight: number } => point.maxWeight !== null).slice(-8)
+  if (!values.length) return <section className="detail-card"><div className="detail-section-title"><h2>Gewichtsentwicklung</h2></div><p className="muted-copy">Noch keine eingetragenen Gewichte.</p></section>
+  const weights = values.map((point) => point.maxWeight)
+  const minimum = Math.min(...weights)
+  const maximum = Math.max(...weights)
+  const range = Math.max(1, maximum - minimum)
+  const coordinates = values.map((point, index) => ({
+    x: values.length === 1 ? 160 : 24 + (index / (values.length - 1)) * 272,
+    y: 122 - ((point.maxWeight - minimum) / range) * 86,
+    point,
+  }))
+  return <section className="detail-card weight-chart"><div className="detail-section-title"><h2>Gewichtsentwicklung</h2><span>max. Gewicht je Einheit</span></div><svg viewBox="0 0 320 150" role="img" aria-label="Gewichtsentwicklung"><line x1="24" y1="36" x2="296" y2="36" /><line x1="24" y1="79" x2="296" y2="79" /><line x1="24" y1="122" x2="296" y2="122" /><polyline points={coordinates.map(({ x, y }) => `${x},${y}`).join(' ')} />{coordinates.map(({ x, y, point }) => <g key={point.sessionId}><circle cx={x} cy={y} r="5" /><text x={x} y={Math.max(18, y - 10)}>{formatNumber(point.maxWeight)}</text></g>)}</svg><div className="chart-dates">{coordinates.map(({ point }) => <span key={point.sessionId}>{new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: '2-digit' }).format(new Date(point.date))}</span>)}</div></section>
+}
+
+function PersonalRecords({ statistics }: { statistics: ExerciseStatistics }) {
+  const records: Array<{ label: string; value: string }> = []
+  if (statistics.highestWeight !== null && statistics.highestWeight > 0) records.push({ label: 'Weight PR', value: `${formatNumber(statistics.highestWeight)} kg` })
+  if (statistics.highestReps !== null) records.push({ label: 'Rep PR', value: `${formatNumber(statistics.highestReps)} Wdh.` })
+  if (statistics.longestDurationSeconds !== null) records.push({ label: 'Längste Dauer', value: formatDuration(statistics.longestDurationSeconds) })
+  if (statistics.volumeRecord !== null) records.push({ label: 'Volume PR', value: `${formatNumber(statistics.volumeRecord)} kg` })
+  if (statistics.estimatedOneRepMax !== null) records.push({ label: 'geschätztes 1RM', value: `${formatNumber(statistics.estimatedOneRepMax)} kg` })
+  return <section className="detail-card"><div className="detail-section-title"><h2>Bestleistungen</h2></div>{records.length ? <div className="record-grid">{records.map((record) => <div key={record.label}><strong>{record.value}</strong><small>{record.label}</small></div>)}</div> : <p className="muted-copy">Noch keine messbare Bestleistung.</p>}</section>
 }
 
 function ExerciseArt({ category }: { category: Category }) {
@@ -514,23 +586,25 @@ function RangeField({ label, value, min, onChange }: { label: string; value: num
   return <label className="range-field"><span>{label}<strong>{value}/10</strong></span><input type="range" min={min} max="10" value={value} onChange={(event) => onChange(Number(event.target.value))} /></label>
 }
 
-function History({ sessions, detailId, onOpen, onBack, onDelete }: { sessions: WorkoutSession[]; detailId: string | null; onOpen: (id: string) => void; onBack: () => void; onDelete: (id: string) => void }) {
+function History({ sessions, exerciseById, detailId, onOpen, onBack, onDelete }: { sessions: WorkoutSession[]; exerciseById: Map<string, Exercise>; detailId: string | null; onOpen: (id: string) => void; onBack: () => void; onDelete: (id: string) => void }) {
   const detail = sessions.find((session) => session.id === detailId)
-  if (detail) return <HistoryDetail session={detail} onBack={onBack} onDelete={onDelete} />
+  if (detail) return <HistoryDetail session={detail} exerciseById={exerciseById} onBack={onBack} onDelete={onDelete} />
   return <><PageHeader eyebrow="Lokal auf diesem Gerät" title="Verlauf" text={`${sessions.length} abgeschlossene ${sessions.length === 1 ? 'Einheit' : 'Einheiten'}`} />
     {sessions.length === 0 ? <div className="empty-state"><span>↻</span><h2>Noch kein Verlauf</h2><p>Schließe ein Training ab. Danach findest du hier alle Sätze, Werte und Notizen.</p></div> : <div className="timeline">{sessions.map((session) => <button className="timeline-item" key={session.id} onClick={() => onOpen(session.id)}><span className="timeline-dot" /><div><small>{formatDate(session.completedAt)}</small><strong>{session.unitName}</strong><p>{session.durationMinutes} Min · Anstrengung {session.effort}/10</p></div><b>›</b></button>)}</div>}
   </>
 }
 
-function HistoryDetail({ session, onBack, onDelete }: { session: WorkoutSession; onBack: () => void; onDelete: (id: string) => void }) {
+function HistoryDetail({ session, exerciseById, onBack, onDelete }: { session: WorkoutSession; exerciseById: Map<string, Exercise>; onBack: () => void; onDelete: (id: string) => void }) {
+  const summary = calculateWorkoutSummary(session, exerciseById)
   return <><button className="back-button" onClick={onBack}>← Verlauf</button><PageHeader eyebrow={formatDate(session.completedAt)} title={session.unitName} />
-    <div className="stat-grid history-overview"><div><strong>{session.durationMinutes}</strong><small>Minuten</small></div><div><strong>{session.effort}/10</strong><small>Anstrengung</small></div><div><strong>{completedExerciseCount(session.exercises)}</strong><small>Übungen</small></div><div><strong>{formatNumber(completedVolume(session.exercises))}</strong><small>Volumen kg</small></div></div>
+    <div className="stat-grid history-overview"><div><strong>{session.durationMinutes}</strong><small>Minuten</small></div><div><strong>{session.effort}/10</strong><small>Anstrengung</small></div><div><strong>{summary.completedExercises}</strong><small>Übungen</small></div><div><strong>{summary.completedWorkSets}</strong><small>Arbeitssätze</small></div><div><strong>{summary.totalVolume !== null ? formatNumber(summary.totalVolume) : '–'}</strong><small>Volumen kg</small></div></div>
     <div className="pain-summary"><strong>Beschwerden</strong><div><span>Nacken <b>{session.pain.neck}/10</b></span><span>Unterer Rücken <b>{session.pain.lowerBack}/10</b></span><span>Hüfte <b>{session.pain.hip}/10</b></span><span>Linkes Knie <b>{session.pain.leftKnee}/10</b></span></div></div>
     <div className="history-exercises">{session.exercises.map((item, index) => {
       const completedSets = item.sets.map((set, setIndex) => ({ set, setIndex })).filter(({ set }) => isSetCompleted(set))
       const notCompleted = !item.removed && !item.skipped && completedSets.length === 0
       const className = item.removed ? 'removed' : notCompleted ? 'not-completed' : ''
-      return <article className={className} key={item.id}><div><span>{String(index + 1).padStart(2, '0')}</span><h3>{item.exerciseName}</h3>{item.source === 'added' && <small className="history-source added">Hinzugefügt</small>}{item.source === 'replacement' && <small className="history-source replacement">Ersetzt {systemExerciseById.get(item.replacedExerciseId ?? '')?.name ?? item.replacedExerciseId}</small>}{item.removed && <small className="history-source removed">Für diese Session entfernt</small>}{item.skipped && !item.removed && <small>Übersprungen</small>}{notCompleted && <small className="history-source not-completed">Nicht durchgeführt</small>}{item.section !== 'strength' && completedSets.length > 0 && <small className="history-source completed">Abgehakt</small>}</div>{item.section === 'strength' && completedSets.length > 0 && <><div className="history-rest">Pause {formatSeconds(item.restSeconds)}</div><div className="history-sets">{completedSets.map(({ set, setIndex }) => <p key={set.id}><span>Satz {setIndex + 1}</span><strong>{set.weight ? `${set.weight} kg` : 'ohne Zusatzgewicht'} · {set.reps || '–'} Wdh.{set.rir ? ` · RIR ${set.rir}` : ''}{set.restSeconds ? ` · Pause ${formatSeconds(set.restSeconds)}` : ''}</strong><b>✓</b></p>)}</div></>}{item.userNote && <blockquote>{item.userNote}</blockquote>}</article>
+      const trackingMode = exerciseById.get(item.exerciseId)?.trackingMode ?? 'weight_reps'
+      return <article className={className} key={item.id}><div><span>{String(index + 1).padStart(2, '0')}</span><h3>{item.exerciseName}</h3>{item.source === 'added' && <small className="history-source added">Hinzugefügt</small>}{item.source === 'replacement' && <small className="history-source replacement">Ersetzt {systemExerciseById.get(item.replacedExerciseId ?? '')?.name ?? item.replacedExerciseId}</small>}{item.removed && <small className="history-source removed">Für diese Session entfernt</small>}{item.skipped && !item.removed && <small>Übersprungen</small>}{notCompleted && <small className="history-source not-completed">Nicht durchgeführt</small>}{item.section !== 'strength' && completedSets.length > 0 && <small className="history-source completed">Abgehakt</small>}</div>{item.section === 'strength' && completedSets.length > 0 && <><div className="history-rest">Pause {formatSeconds(item.restSeconds)}</div><div className="history-sets">{completedSets.map(({ set, setIndex }) => <p key={set.id}><span>Satz {setIndex + 1}</span><strong>{formatSetPerformance(toSetPerformance(set, trackingMode), trackingMode)}{set.rir ? ` · RIR ${set.rir}` : ''}{set.restSeconds ? ` · Pause ${formatSeconds(set.restSeconds)}` : ''}</strong><b>✓</b></p>)}</div></>}{item.userNote && <blockquote>{item.userNote}</blockquote>}</article>
     })}</div>
     {session.note && <div className="session-note"><strong>Notiz</strong><p>{session.note}</p></div>}
     <button className="danger-button" onClick={() => { if (window.confirm('Dieses Training wirklich löschen?')) onDelete(session.id) }}>Training löschen</button>
